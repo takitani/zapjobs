@@ -1,0 +1,10 @@
+{
+  "version": 2,
+  "dgSpecHash": "Sh9uP7dYl5E=",
+  "success": true,
+  "projectFilePath": "/home/opik/Devel/zapjobs/src/ZapJobs.Storage.InMemory/ZapJobs.Storage.InMemory.csproj",
+  "expectedPackageFiles": [
+    "/home/opik/.nuget/packages/microsoft.extensions.dependencyinjection.abstractions/9.0.0/microsoft.extensions.dependencyinjection.abstractions.9.0.0.nupkg.sha512"
+  ],
+  "logs": []
+}

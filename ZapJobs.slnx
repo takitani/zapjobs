@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/ZapJobs.Core/ZapJobs.Core.csproj" />
+    <Project Path="src/ZapJobs.Storage.InMemory/ZapJobs.Storage.InMemory.csproj" />
+    <Project Path="src/ZapJobs.Storage.PostgreSQL/ZapJobs.Storage.PostgreSQL.csproj" />
+    <Project Path="src/ZapJobs/ZapJobs.csproj" />
+  </Folder>
+</Solution>

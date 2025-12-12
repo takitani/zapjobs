@@ -1,0 +1,299 @@
+using System.Collections.Concurrent;
+using ZapJobs.Core;
+
+namespace ZapJobs.Storage.InMemory;
+
+/// <summary>
+/// In-memory implementation of IJobStorage for development and testing
+/// </summary>
+public class InMemoryJobStorage : IJobStorage
+{
+    private readonly ConcurrentDictionary<string, JobDefinition> _definitions = new();
+    private readonly ConcurrentDictionary<Guid, JobRun> _runs = new();
+    private readonly ConcurrentDictionary<Guid, List<JobLog>> _logs = new();
+    private readonly ConcurrentDictionary<string, JobHeartbeat> _heartbeats = new();
+    private readonly object _lock = new();
+
+    // Job Definitions
+
+    public Task<JobDefinition?> GetJobDefinitionAsync(string jobTypeId, CancellationToken ct = default)
+    {
+        _definitions.TryGetValue(jobTypeId, out var definition);
+        return Task.FromResult(definition);
+    }
+
+    public Task<IReadOnlyList<JobDefinition>> GetAllDefinitionsAsync(CancellationToken ct = default)
+    {
+        return Task.FromResult<IReadOnlyList<JobDefinition>>(_definitions.Values.ToList());
+    }
+
+    public Task UpsertDefinitionAsync(JobDefinition definition, CancellationToken ct = default)
+    {
+        definition.UpdatedAt = DateTime.UtcNow;
+        _definitions[definition.JobTypeId] = definition;
+        return Task.CompletedTask;
+    }
+
+    public Task DeleteDefinitionAsync(string jobTypeId, CancellationToken ct = default)
+    {
+        _definitions.TryRemove(jobTypeId, out _);
+        return Task.CompletedTask;
+    }
+
+    // Job Runs
+
+    public Task<Guid> EnqueueAsync(JobRun run, CancellationToken ct = default)
+    {
+        run.CreatedAt = DateTime.UtcNow;
+        _runs[run.Id] = run;
+        return Task.FromResult(run.Id);
+    }
+
+    public Task<JobRun?> GetRunAsync(Guid runId, CancellationToken ct = default)
+    {
+        _runs.TryGetValue(runId, out var run);
+        return Task.FromResult(run);
+    }
+
+    public Task<IReadOnlyList<JobRun>> GetPendingRunsAsync(string[] queues, int limit = 100, CancellationToken ct = default)
+    {
+        var runs = _runs.Values
+            .Where(r => r.Status == JobRunStatus.Pending && queues.Contains(r.Queue))
+            .OrderBy(r => r.CreatedAt)
+            .Take(limit)
+            .ToList();
+
+        return Task.FromResult<IReadOnlyList<JobRun>>(runs);
+    }
+
+    public Task<IReadOnlyList<JobRun>> GetRunsForRetryAsync(CancellationToken ct = default)
+    {
+        var runs = _runs.Values
+            .Where(r => r.Status == JobRunStatus.AwaitingRetry)
+            .OrderBy(r => r.NextRetryAt)
+            .ToList();
+
+        return Task.FromResult<IReadOnlyList<JobRun>>(runs);
+    }
+
+    public Task<IReadOnlyList<JobRun>> GetRunsByStatusAsync(JobRunStatus status, int limit = 100, int offset = 0, CancellationToken ct = default)
+    {
+        var runs = _runs.Values
+            .Where(r => r.Status == status)
+            .OrderByDescending(r => r.CreatedAt)
+            .Skip(offset)
+            .Take(limit)
+            .ToList();
+
+        return Task.FromResult<IReadOnlyList<JobRun>>(runs);
+    }
+
+    public Task<IReadOnlyList<JobRun>> GetRunsByJobTypeAsync(string jobTypeId, int limit = 100, int offset = 0, CancellationToken ct = default)
+    {
+        var runs = _runs.Values
+            .Where(r => r.JobTypeId == jobTypeId)
+            .OrderByDescending(r => r.CreatedAt)
+            .Skip(offset)
+            .Take(limit)
+            .ToList();
+
+        return Task.FromResult<IReadOnlyList<JobRun>>(runs);
+    }
+
+    public Task UpdateRunAsync(JobRun run, CancellationToken ct = default)
+    {
+        _runs[run.Id] = run;
+        return Task.CompletedTask;
+    }
+
+    public Task<bool> TryAcquireRunAsync(Guid runId, string workerId, CancellationToken ct = default)
+    {
+        lock (_lock)
+        {
+            if (!_runs.TryGetValue(runId, out var run))
+                return Task.FromResult(false);
+
+            if (run.Status != JobRunStatus.Pending)
+                return Task.FromResult(false);
+
+            run.Status = JobRunStatus.Running;
+            run.WorkerId = workerId;
+            run.StartedAt = DateTime.UtcNow;
+            return Task.FromResult(true);
+        }
+    }
+
+    // Scheduling
+
+    public Task<IReadOnlyList<JobDefinition>> GetDueJobsAsync(DateTime asOf, CancellationToken ct = default)
+    {
+        var jobs = _definitions.Values
+            .Where(d => d.IsEnabled && d.NextRunAt.HasValue && d.NextRunAt <= asOf)
+            .ToList();
+
+        return Task.FromResult<IReadOnlyList<JobDefinition>>(jobs);
+    }
+
+    public Task UpdateNextRunAsync(string jobTypeId, DateTime? nextRun, DateTime? lastRun = null, JobRunStatus? lastStatus = null, CancellationToken ct = default)
+    {
+        if (_definitions.TryGetValue(jobTypeId, out var definition))
+        {
+            definition.NextRunAt = nextRun;
+            if (lastRun.HasValue)
+                definition.LastRunAt = lastRun;
+            if (lastStatus.HasValue)
+                definition.LastRunStatus = lastStatus;
+            definition.UpdatedAt = DateTime.UtcNow;
+        }
+        return Task.CompletedTask;
+    }
+
+    // Logs
+
+    public Task AddLogAsync(JobLog log, CancellationToken ct = default)
+    {
+        var logs = _logs.GetOrAdd(log.RunId, _ => new List<JobLog>());
+        lock (logs)
+        {
+            logs.Add(log);
+        }
+        return Task.CompletedTask;
+    }
+
+    public Task AddLogsAsync(IEnumerable<JobLog> logs, CancellationToken ct = default)
+    {
+        foreach (var log in logs)
+        {
+            var runLogs = _logs.GetOrAdd(log.RunId, _ => new List<JobLog>());
+            lock (runLogs)
+            {
+                runLogs.Add(log);
+            }
+        }
+        return Task.CompletedTask;
+    }
+
+    public Task<IReadOnlyList<JobLog>> GetLogsAsync(Guid runId, int limit = 500, CancellationToken ct = default)
+    {
+        if (_logs.TryGetValue(runId, out var logs))
+        {
+            lock (logs)
+            {
+                return Task.FromResult<IReadOnlyList<JobLog>>(
+                    logs.OrderByDescending(l => l.Timestamp).Take(limit).ToList());
+            }
+        }
+        return Task.FromResult<IReadOnlyList<JobLog>>(Array.Empty<JobLog>());
+    }
+
+    // Heartbeats
+
+    public Task SendHeartbeatAsync(JobHeartbeat heartbeat, CancellationToken ct = default)
+    {
+        heartbeat.Timestamp = DateTime.UtcNow;
+        _heartbeats[heartbeat.WorkerId] = heartbeat;
+        return Task.CompletedTask;
+    }
+
+    public Task<IReadOnlyList<JobHeartbeat>> GetHeartbeatsAsync(CancellationToken ct = default)
+    {
+        return Task.FromResult<IReadOnlyList<JobHeartbeat>>(_heartbeats.Values.ToList());
+    }
+
+    public Task<IReadOnlyList<JobHeartbeat>> GetStaleHeartbeatsAsync(TimeSpan threshold, CancellationToken ct = default)
+    {
+        var cutoff = DateTime.UtcNow - threshold;
+        var stale = _heartbeats.Values
+            .Where(h => h.Timestamp < cutoff)
+            .ToList();
+
+        return Task.FromResult<IReadOnlyList<JobHeartbeat>>(stale);
+    }
+
+    public Task CleanupStaleHeartbeatsAsync(TimeSpan threshold, CancellationToken ct = default)
+    {
+        var cutoff = DateTime.UtcNow - threshold;
+        var staleKeys = _heartbeats
+            .Where(kvp => kvp.Value.Timestamp < cutoff)
+            .Select(kvp => kvp.Key)
+            .ToList();
+
+        foreach (var key in staleKeys)
+        {
+            _heartbeats.TryRemove(key, out _);
+        }
+
+        return Task.CompletedTask;
+    }
+
+    // Maintenance
+
+    public Task<int> CleanupOldRunsAsync(TimeSpan retention, CancellationToken ct = default)
+    {
+        var cutoff = DateTime.UtcNow - retention;
+        var oldRuns = _runs
+            .Where(kvp => kvp.Value.CompletedAt.HasValue && kvp.Value.CompletedAt < cutoff)
+            .Select(kvp => kvp.Key)
+            .ToList();
+
+        foreach (var key in oldRuns)
+        {
+            _runs.TryRemove(key, out _);
+            _logs.TryRemove(key, out _);
+        }
+
+        return Task.FromResult(oldRuns.Count);
+    }
+
+    public Task<int> CleanupOldLogsAsync(TimeSpan retention, CancellationToken ct = default)
+    {
+        var cutoff = DateTime.UtcNow - retention;
+        var count = 0;
+
+        foreach (var kvp in _logs)
+        {
+            lock (kvp.Value)
+            {
+                var oldLogs = kvp.Value.Where(l => l.Timestamp < cutoff).ToList();
+                foreach (var log in oldLogs)
+                {
+                    kvp.Value.Remove(log);
+                    count++;
+                }
+            }
+        }
+
+        return Task.FromResult(count);
+    }
+
+    public Task<JobStorageStats> GetStatsAsync(CancellationToken ct = default)
+    {
+        var today = DateTime.UtcNow.Date;
+        var allRuns = _runs.Values.ToList();
+        var todayRuns = allRuns.Where(r => r.CreatedAt.Date == today).ToList();
+
+        var stats = new JobStorageStats(
+            TotalJobs: _definitions.Count,
+            TotalRuns: allRuns.Count,
+            PendingRuns: allRuns.Count(r => r.Status == JobRunStatus.Pending),
+            RunningRuns: allRuns.Count(r => r.Status == JobRunStatus.Running),
+            CompletedToday: todayRuns.Count(r => r.Status == JobRunStatus.Completed),
+            FailedToday: todayRuns.Count(r => r.Status == JobRunStatus.Failed),
+            ActiveWorkers: _heartbeats.Count(h => h.Value.Timestamp >= DateTime.UtcNow.AddMinutes(-2)),
+            TotalLogEntries: _logs.Values.Sum(l => l.Count)
+        );
+
+        return Task.FromResult(stats);
+    }
+
+    /// <summary>
+    /// Clear all data (useful for testing)
+    /// </summary>
+    public void Clear()
+    {
+        _definitions.Clear();
+        _runs.Clear();
+        _logs.Clear();
+        _heartbeats.Clear();
+    }
+}

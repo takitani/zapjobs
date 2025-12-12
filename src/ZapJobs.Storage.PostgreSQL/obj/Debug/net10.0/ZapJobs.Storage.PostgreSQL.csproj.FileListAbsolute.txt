@@ -1,0 +1,16 @@
+/home/opik/Devel/zapjobs/src/ZapJobs.Storage.PostgreSQL/bin/Debug/net10.0/Migrations/InitialCreate.sql
+/home/opik/Devel/zapjobs/src/ZapJobs.Storage.PostgreSQL/bin/Debug/net10.0/ZapJobs.Storage.PostgreSQL.deps.json
+/home/opik/Devel/zapjobs/src/ZapJobs.Storage.PostgreSQL/bin/Debug/net10.0/ZapJobs.Storage.PostgreSQL.dll
+/home/opik/Devel/zapjobs/src/ZapJobs.Storage.PostgreSQL/bin/Debug/net10.0/ZapJobs.Storage.PostgreSQL.pdb
+/home/opik/Devel/zapjobs/src/ZapJobs.Storage.PostgreSQL/bin/Debug/net10.0/ZapJobs.Core.dll
+/home/opik/Devel/zapjobs/src/ZapJobs.Storage.PostgreSQL/bin/Debug/net10.0/ZapJobs.Core.pdb
+/home/opik/Devel/zapjobs/src/ZapJobs.Storage.PostgreSQL/obj/Debug/net10.0/ZapJobs.Storage.PostgreSQL.csproj.AssemblyReference.cache
+/home/opik/Devel/zapjobs/src/ZapJobs.Storage.PostgreSQL/obj/Debug/net10.0/ZapJobs.Storage.PostgreSQL.GeneratedMSBuildEditorConfig.editorconfig
+/home/opik/Devel/zapjobs/src/ZapJobs.Storage.PostgreSQL/obj/Debug/net10.0/ZapJobs.Storage.PostgreSQL.AssemblyInfoInputs.cache
+/home/opik/Devel/zapjobs/src/ZapJobs.Storage.PostgreSQL/obj/Debug/net10.0/ZapJobs.Storage.PostgreSQL.AssemblyInfo.cs
+/home/opik/Devel/zapjobs/src/ZapJobs.Storage.PostgreSQL/obj/Debug/net10.0/ZapJobs.Storage.PostgreSQL.csproj.CoreCompileInputs.cache
+/home/opik/Devel/zapjobs/src/ZapJobs.Storage.PostgreSQL/obj/Debug/net10.0/ZapJobs..75943721.Up2Date
+/home/opik/Devel/zapjobs/src/ZapJobs.Storage.PostgreSQL/obj/Debug/net10.0/ZapJobs.Storage.PostgreSQL.dll
+/home/opik/Devel/zapjobs/src/ZapJobs.Storage.PostgreSQL/obj/Debug/net10.0/refint/ZapJobs.Storage.PostgreSQL.dll
+/home/opik/Devel/zapjobs/src/ZapJobs.Storage.PostgreSQL/obj/Debug/net10.0/ZapJobs.Storage.PostgreSQL.pdb
+/home/opik/Devel/zapjobs/src/ZapJobs.Storage.PostgreSQL/obj/Debug/net10.0/ref/ZapJobs.Storage.PostgreSQL.dll

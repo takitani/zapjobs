@@ -1,0 +1,12 @@
+{
+  "version": 2,
+  "dgSpecHash": "fTFJ/BlJcmE=",
+  "success": true,
+  "projectFilePath": "/home/opik/Devel/zapjobs/src/ZapJobs.Storage.PostgreSQL/ZapJobs.Storage.PostgreSQL.csproj",
+  "expectedPackageFiles": [
+    "/home/opik/.nuget/packages/microsoft.extensions.dependencyinjection.abstractions/9.0.0/microsoft.extensions.dependencyinjection.abstractions.9.0.0.nupkg.sha512",
+    "/home/opik/.nuget/packages/microsoft.extensions.logging.abstractions/8.0.2/microsoft.extensions.logging.abstractions.8.0.2.nupkg.sha512",
+    "/home/opik/.nuget/packages/npgsql/9.0.2/npgsql.9.0.2.nupkg.sha512"
+  ],
+  "logs": []
+}
