@@ -1,0 +1,23 @@
+# Build results
+bin/
+obj/
+
+# IDE
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+
+# NuGet
+packages/
+*.nupkg
+
+# Test results
+TestResults/
+
+# Local settings
+*.local.json
+appsettings.*.json
+!appsettings.json
+!appsettings.Development.json
