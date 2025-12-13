@@ -753,6 +753,19 @@ public class PostgreSqlJobStorage : IJobStorage
         return new JobStorageStats(0, 0, 0, 0, 0, 0, 0, 0);
     }
 
+    public async Task<int> GetDeadLetterCountAsync(CancellationToken ct = default)
+    {
+        await using var conn = CreateConnection();
+        await conn.OpenAsync(ct);
+
+        await using var cmd = new NpgsqlCommand(
+            $"SELECT COUNT(*) FROM {_runs} WHERE status = @status", conn);
+        cmd.Parameters.AddWithValue("status", (int)JobRunStatus.Failed);
+
+        var result = await cmd.ExecuteScalarAsync(ct);
+        return Convert.ToInt32(result);
+    }
+
     // Helper methods
 
     private static JobDefinition MapDefinition(NpgsqlDataReader reader)

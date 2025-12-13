@@ -4,6 +4,7 @@
     <Project Path="src/ZapJobs.Storage.InMemory/ZapJobs.Storage.InMemory.csproj" />
     <Project Path="src/ZapJobs.Storage.PostgreSQL/ZapJobs.Storage.PostgreSQL.csproj" />
     <Project Path="src/ZapJobs/ZapJobs.csproj" />
+    <Project Path="src/ZapJobs.AspNetCore/ZapJobs.AspNetCore.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/ZapJobs.Core.Tests/ZapJobs.Core.Tests.csproj" />
