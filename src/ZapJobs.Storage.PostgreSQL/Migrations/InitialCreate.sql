@@ -1,8 +1,11 @@
 -- ZapJobs PostgreSQL Schema
--- Run this script to create the required tables
+-- Creates a dedicated 'zapjobs' schema with clean table names
+
+-- Create schema
+CREATE SCHEMA IF NOT EXISTS zapjobs;
 
 -- Job Definitions table
-CREATE TABLE IF NOT EXISTS zapjobs_definitions (
+CREATE TABLE IF NOT EXISTS zapjobs.definitions (
     job_type_id VARCHAR(255) PRIMARY KEY,
     display_name VARCHAR(255) NOT NULL,
     description TEXT,
@@ -25,11 +28,11 @@ CREATE TABLE IF NOT EXISTS zapjobs_definitions (
 
 -- Create index for due jobs query
 CREATE INDEX IF NOT EXISTS idx_definitions_next_run
-    ON zapjobs_definitions(next_run_at)
+    ON zapjobs.definitions(next_run_at)
     WHERE is_enabled = TRUE;
 
 -- Job Runs table
-CREATE TABLE IF NOT EXISTS zapjobs_runs (
+CREATE TABLE IF NOT EXISTS zapjobs.runs (
     id UUID PRIMARY KEY,
     job_type_id VARCHAR(255) NOT NULL,
     status INTEGER NOT NULL DEFAULT 0,
@@ -59,23 +62,23 @@ CREATE TABLE IF NOT EXISTS zapjobs_runs (
 );
 
 -- Indexes for common queries
-CREATE INDEX IF NOT EXISTS idx_runs_status ON zapjobs_runs(status);
-CREATE INDEX IF NOT EXISTS idx_runs_job_type ON zapjobs_runs(job_type_id);
-CREATE INDEX IF NOT EXISTS idx_runs_created_at ON zapjobs_runs(created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_runs_completed_at ON zapjobs_runs(completed_at) WHERE completed_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_runs_status ON zapjobs.runs(status);
+CREATE INDEX IF NOT EXISTS idx_runs_job_type ON zapjobs.runs(job_type_id);
+CREATE INDEX IF NOT EXISTS idx_runs_created_at ON zapjobs.runs(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_runs_completed_at ON zapjobs.runs(completed_at) WHERE completed_at IS NOT NULL;
 
 -- Index for pending jobs query (status + queue)
 CREATE INDEX IF NOT EXISTS idx_runs_pending
-    ON zapjobs_runs(queue, created_at)
+    ON zapjobs.runs(queue, created_at)
     WHERE status = 0;
 
 -- Index for retry jobs query
 CREATE INDEX IF NOT EXISTS idx_runs_retry
-    ON zapjobs_runs(next_retry_at)
+    ON zapjobs.runs(next_retry_at)
     WHERE status = 5;
 
 -- Job Logs table
-CREATE TABLE IF NOT EXISTS zapjobs_logs (
+CREATE TABLE IF NOT EXISTS zapjobs.logs (
     id UUID PRIMARY KEY,
     run_id UUID NOT NULL,
     level INTEGER NOT NULL DEFAULT 2,
@@ -88,11 +91,11 @@ CREATE TABLE IF NOT EXISTS zapjobs_logs (
 );
 
 -- Indexes for logs
-CREATE INDEX IF NOT EXISTS idx_logs_run_id ON zapjobs_logs(run_id);
-CREATE INDEX IF NOT EXISTS idx_logs_timestamp ON zapjobs_logs(timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_logs_run_id ON zapjobs.logs(run_id);
+CREATE INDEX IF NOT EXISTS idx_logs_timestamp ON zapjobs.logs(timestamp DESC);
 
 -- Worker Heartbeats table
-CREATE TABLE IF NOT EXISTS zapjobs_heartbeats (
+CREATE TABLE IF NOT EXISTS zapjobs.heartbeats (
     id UUID,
     worker_id VARCHAR(255) PRIMARY KEY,
     hostname VARCHAR(255) NOT NULL,
@@ -108,17 +111,11 @@ CREATE TABLE IF NOT EXISTS zapjobs_heartbeats (
 );
 
 -- Index for active workers query
-CREATE INDEX IF NOT EXISTS idx_heartbeats_timestamp ON zapjobs_heartbeats(timestamp DESC);
-
--- Add foreign key constraints (optional, can be disabled for performance)
--- ALTER TABLE zapjobs_runs ADD CONSTRAINT fk_runs_definition
---     FOREIGN KEY (job_type_id) REFERENCES zapjobs_definitions(job_type_id) ON DELETE CASCADE;
-
--- ALTER TABLE zapjobs_logs ADD CONSTRAINT fk_logs_run
---     FOREIGN KEY (run_id) REFERENCES zapjobs_runs(id) ON DELETE CASCADE;
+CREATE INDEX IF NOT EXISTS idx_heartbeats_timestamp ON zapjobs.heartbeats(timestamp DESC);
 
 -- Comments
-COMMENT ON TABLE zapjobs_definitions IS 'Job type configurations and schedules';
-COMMENT ON TABLE zapjobs_runs IS 'Individual job executions';
-COMMENT ON TABLE zapjobs_logs IS 'Execution logs for job runs';
-COMMENT ON TABLE zapjobs_heartbeats IS 'Worker health check heartbeats';
+COMMENT ON SCHEMA zapjobs IS 'ZapJobs background job processing tables';
+COMMENT ON TABLE zapjobs.definitions IS 'Job type configurations and schedules';
+COMMENT ON TABLE zapjobs.runs IS 'Individual job executions';
+COMMENT ON TABLE zapjobs.logs IS 'Execution logs for job runs';
+COMMENT ON TABLE zapjobs.heartbeats IS 'Worker health check heartbeats';

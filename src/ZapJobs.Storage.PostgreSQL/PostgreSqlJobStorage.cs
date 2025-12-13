@@ -5,16 +5,36 @@ using ZapJobs.Core;
 namespace ZapJobs.Storage.PostgreSQL;
 
 /// <summary>
-/// PostgreSQL implementation of IJobStorage for production use
+/// PostgreSQL implementation of IJobStorage for production use.
+/// Uses a dedicated schema (default: "zapjobs") with clean table names.
 /// </summary>
 public class PostgreSqlJobStorage : IJobStorage
 {
     private readonly string _connectionString;
+    private readonly string _schema;
     private readonly JsonSerializerOptions _jsonOptions;
 
-    public PostgreSqlJobStorage(string connectionString)
+    // Table names with schema
+    private readonly string _definitions;
+    private readonly string _runs;
+    private readonly string _logs;
+    private readonly string _heartbeats;
+
+    public PostgreSqlJobStorage(string connectionString) : this(new PostgreSqlStorageOptions { ConnectionString = connectionString })
     {
-        _connectionString = connectionString;
+    }
+
+    public PostgreSqlJobStorage(PostgreSqlStorageOptions options)
+    {
+        _connectionString = options.ConnectionString;
+        _schema = options.Schema;
+
+        // Build schema-qualified table names
+        _definitions = $"{_schema}.definitions";
+        _runs = $"{_schema}.runs";
+        _logs = $"{_schema}.logs";
+        _heartbeats = $"{_schema}.heartbeats";
+
         _jsonOptions = new JsonSerializerOptions
         {
             PropertyNamingPolicy = JsonNamingPolicy.CamelCase
@@ -30,12 +50,12 @@ public class PostgreSqlJobStorage : IJobStorage
         await using var conn = CreateConnection();
         await conn.OpenAsync(ct);
 
-        await using var cmd = new NpgsqlCommand("""
+        await using var cmd = new NpgsqlCommand($"""
             SELECT job_type_id, display_name, description, queue, schedule_type, interval_minutes,
                    cron_expression, time_zone_id, is_enabled, max_retries, timeout_seconds,
                    max_concurrency, last_run_at, next_run_at, last_run_status, config_json,
                    created_at, updated_at
-            FROM zapjobs_definitions
+            FROM {_definitions}
             WHERE job_type_id = @jobTypeId
             """, conn);
 
@@ -54,12 +74,12 @@ public class PostgreSqlJobStorage : IJobStorage
         await using var conn = CreateConnection();
         await conn.OpenAsync(ct);
 
-        await using var cmd = new NpgsqlCommand("""
+        await using var cmd = new NpgsqlCommand($"""
             SELECT job_type_id, display_name, description, queue, schedule_type, interval_minutes,
                    cron_expression, time_zone_id, is_enabled, max_retries, timeout_seconds,
                    max_concurrency, last_run_at, next_run_at, last_run_status, config_json,
                    created_at, updated_at
-            FROM zapjobs_definitions
+            FROM {_definitions}
             ORDER BY display_name
             """, conn);
 
@@ -77,8 +97,8 @@ public class PostgreSqlJobStorage : IJobStorage
         await using var conn = CreateConnection();
         await conn.OpenAsync(ct);
 
-        await using var cmd = new NpgsqlCommand("""
-            INSERT INTO zapjobs_definitions (
+        await using var cmd = new NpgsqlCommand($"""
+            INSERT INTO {_definitions} (
                 job_type_id, display_name, description, queue, schedule_type, interval_minutes,
                 cron_expression, time_zone_id, is_enabled, max_retries, timeout_seconds,
                 max_concurrency, last_run_at, next_run_at, last_run_status, config_json,
@@ -136,7 +156,7 @@ public class PostgreSqlJobStorage : IJobStorage
         await conn.OpenAsync(ct);
 
         await using var cmd = new NpgsqlCommand(
-            "DELETE FROM zapjobs_definitions WHERE job_type_id = @jobTypeId", conn);
+            $"DELETE FROM {_definitions} WHERE job_type_id = @jobTypeId", conn);
         cmd.Parameters.AddWithValue("jobTypeId", jobTypeId);
 
         await cmd.ExecuteNonQueryAsync(ct);
@@ -149,8 +169,8 @@ public class PostgreSqlJobStorage : IJobStorage
         await using var conn = CreateConnection();
         await conn.OpenAsync(ct);
 
-        await using var cmd = new NpgsqlCommand("""
-            INSERT INTO zapjobs_runs (
+        await using var cmd = new NpgsqlCommand($"""
+            INSERT INTO {_runs} (
                 id, job_type_id, status, trigger_type, triggered_by, worker_id, queue,
                 created_at, scheduled_at, started_at, completed_at, duration_ms,
                 progress, total, progress_message,
@@ -177,14 +197,14 @@ public class PostgreSqlJobStorage : IJobStorage
         await using var conn = CreateConnection();
         await conn.OpenAsync(ct);
 
-        await using var cmd = new NpgsqlCommand("""
+        await using var cmd = new NpgsqlCommand($"""
             SELECT id, job_type_id, status, trigger_type, triggered_by, worker_id, queue,
                    created_at, scheduled_at, started_at, completed_at, duration_ms,
                    progress, total, progress_message,
                    items_processed, items_succeeded, items_failed,
                    attempt_number, next_retry_at, error_message, stack_trace, error_type,
                    input_json, output_json, metadata_json
-            FROM zapjobs_runs
+            FROM {_runs}
             WHERE id = @id
             """, conn);
 
@@ -203,14 +223,14 @@ public class PostgreSqlJobStorage : IJobStorage
         await using var conn = CreateConnection();
         await conn.OpenAsync(ct);
 
-        await using var cmd = new NpgsqlCommand("""
+        await using var cmd = new NpgsqlCommand($"""
             SELECT id, job_type_id, status, trigger_type, triggered_by, worker_id, queue,
                    created_at, scheduled_at, started_at, completed_at, duration_ms,
                    progress, total, progress_message,
                    items_processed, items_succeeded, items_failed,
                    attempt_number, next_retry_at, error_message, stack_trace, error_type,
                    input_json, output_json, metadata_json
-            FROM zapjobs_runs
+            FROM {_runs}
             WHERE status = @status AND queue = ANY(@queues)
             ORDER BY created_at
             LIMIT @limit
@@ -228,14 +248,14 @@ public class PostgreSqlJobStorage : IJobStorage
         await using var conn = CreateConnection();
         await conn.OpenAsync(ct);
 
-        await using var cmd = new NpgsqlCommand("""
+        await using var cmd = new NpgsqlCommand($"""
             SELECT id, job_type_id, status, trigger_type, triggered_by, worker_id, queue,
                    created_at, scheduled_at, started_at, completed_at, duration_ms,
                    progress, total, progress_message,
                    items_processed, items_succeeded, items_failed,
                    attempt_number, next_retry_at, error_message, stack_trace, error_type,
                    input_json, output_json, metadata_json
-            FROM zapjobs_runs
+            FROM {_runs}
             WHERE status = @status
             ORDER BY next_retry_at
             """, conn);
@@ -250,14 +270,14 @@ public class PostgreSqlJobStorage : IJobStorage
         await using var conn = CreateConnection();
         await conn.OpenAsync(ct);
 
-        await using var cmd = new NpgsqlCommand("""
+        await using var cmd = new NpgsqlCommand($"""
             SELECT id, job_type_id, status, trigger_type, triggered_by, worker_id, queue,
                    created_at, scheduled_at, started_at, completed_at, duration_ms,
                    progress, total, progress_message,
                    items_processed, items_succeeded, items_failed,
                    attempt_number, next_retry_at, error_message, stack_trace, error_type,
                    input_json, output_json, metadata_json
-            FROM zapjobs_runs
+            FROM {_runs}
             WHERE status = @status
             ORDER BY created_at DESC
             OFFSET @offset LIMIT @limit
@@ -275,14 +295,14 @@ public class PostgreSqlJobStorage : IJobStorage
         await using var conn = CreateConnection();
         await conn.OpenAsync(ct);
 
-        await using var cmd = new NpgsqlCommand("""
+        await using var cmd = new NpgsqlCommand($"""
             SELECT id, job_type_id, status, trigger_type, triggered_by, worker_id, queue,
                    created_at, scheduled_at, started_at, completed_at, duration_ms,
                    progress, total, progress_message,
                    items_processed, items_succeeded, items_failed,
                    attempt_number, next_retry_at, error_message, stack_trace, error_type,
                    input_json, output_json, metadata_json
-            FROM zapjobs_runs
+            FROM {_runs}
             WHERE job_type_id = @jobTypeId
             ORDER BY created_at DESC
             OFFSET @offset LIMIT @limit
@@ -300,8 +320,8 @@ public class PostgreSqlJobStorage : IJobStorage
         await using var conn = CreateConnection();
         await conn.OpenAsync(ct);
 
-        await using var cmd = new NpgsqlCommand("""
-            UPDATE zapjobs_runs SET
+        await using var cmd = new NpgsqlCommand($"""
+            UPDATE {_runs} SET
                 status = @status,
                 trigger_type = @triggerType,
                 triggered_by = @triggeredBy,
@@ -335,8 +355,8 @@ public class PostgreSqlJobStorage : IJobStorage
         await using var conn = CreateConnection();
         await conn.OpenAsync(ct);
 
-        await using var cmd = new NpgsqlCommand("""
-            UPDATE zapjobs_runs
+        await using var cmd = new NpgsqlCommand($"""
+            UPDATE {_runs}
             SET status = @newStatus, worker_id = @workerId, started_at = @startedAt
             WHERE id = @id AND status = @oldStatus
             """, conn);
@@ -358,12 +378,12 @@ public class PostgreSqlJobStorage : IJobStorage
         await using var conn = CreateConnection();
         await conn.OpenAsync(ct);
 
-        await using var cmd = new NpgsqlCommand("""
+        await using var cmd = new NpgsqlCommand($"""
             SELECT job_type_id, display_name, description, queue, schedule_type, interval_minutes,
                    cron_expression, time_zone_id, is_enabled, max_retries, timeout_seconds,
                    max_concurrency, last_run_at, next_run_at, last_run_status, config_json,
                    created_at, updated_at
-            FROM zapjobs_definitions
+            FROM {_definitions}
             WHERE is_enabled = true AND next_run_at <= @asOf
             ORDER BY next_run_at
             """, conn);
@@ -384,8 +404,8 @@ public class PostgreSqlJobStorage : IJobStorage
         await using var conn = CreateConnection();
         await conn.OpenAsync(ct);
 
-        await using var cmd = new NpgsqlCommand("""
-            UPDATE zapjobs_definitions
+        await using var cmd = new NpgsqlCommand($"""
+            UPDATE {_definitions}
             SET next_run_at = @nextRun,
                 last_run_at = COALESCE(@lastRun, last_run_at),
                 last_run_status = COALESCE(@lastStatus, last_run_status),
@@ -409,8 +429,8 @@ public class PostgreSqlJobStorage : IJobStorage
         await using var conn = CreateConnection();
         await conn.OpenAsync(ct);
 
-        await using var cmd = new NpgsqlCommand("""
-            INSERT INTO zapjobs_logs (id, run_id, level, message, category, context_json, duration_ms, exception, timestamp)
+        await using var cmd = new NpgsqlCommand($"""
+            INSERT INTO {_logs} (id, run_id, level, message, category, context_json, duration_ms, exception, timestamp)
             VALUES (@id, @runId, @level, @message, @category, @contextJson, @durationMs, @exception, @timestamp)
             """, conn);
 
@@ -436,8 +456,8 @@ public class PostgreSqlJobStorage : IJobStorage
 
         foreach (var log in logs)
         {
-            var cmd = new NpgsqlBatchCommand("""
-                INSERT INTO zapjobs_logs (id, run_id, level, message, category, context_json, duration_ms, exception, timestamp)
+            var cmd = new NpgsqlBatchCommand($"""
+                INSERT INTO {_logs} (id, run_id, level, message, category, context_json, duration_ms, exception, timestamp)
                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
                 """);
 
@@ -462,9 +482,9 @@ public class PostgreSqlJobStorage : IJobStorage
         await using var conn = CreateConnection();
         await conn.OpenAsync(ct);
 
-        await using var cmd = new NpgsqlCommand("""
+        await using var cmd = new NpgsqlCommand($"""
             SELECT id, run_id, level, message, category, context_json, duration_ms, exception, timestamp
-            FROM zapjobs_logs
+            FROM {_logs}
             WHERE run_id = @runId
             ORDER BY timestamp DESC
             LIMIT @limit
@@ -500,8 +520,8 @@ public class PostgreSqlJobStorage : IJobStorage
         await using var conn = CreateConnection();
         await conn.OpenAsync(ct);
 
-        await using var cmd = new NpgsqlCommand("""
-            INSERT INTO zapjobs_heartbeats (
+        await using var cmd = new NpgsqlCommand($"""
+            INSERT INTO {_heartbeats} (
                 id, worker_id, hostname, process_id, current_job_type, current_run_id,
                 timestamp, queues, jobs_processed, jobs_failed, is_shutting_down, started_at
             ) VALUES (
@@ -541,10 +561,10 @@ public class PostgreSqlJobStorage : IJobStorage
         await using var conn = CreateConnection();
         await conn.OpenAsync(ct);
 
-        await using var cmd = new NpgsqlCommand("""
+        await using var cmd = new NpgsqlCommand($"""
             SELECT id, worker_id, hostname, process_id, current_job_type, current_run_id,
                    timestamp, queues, jobs_processed, jobs_failed, is_shutting_down, started_at
-            FROM zapjobs_heartbeats
+            FROM {_heartbeats}
             ORDER BY timestamp DESC
             """, conn);
 
@@ -556,10 +576,10 @@ public class PostgreSqlJobStorage : IJobStorage
         await using var conn = CreateConnection();
         await conn.OpenAsync(ct);
 
-        await using var cmd = new NpgsqlCommand("""
+        await using var cmd = new NpgsqlCommand($"""
             SELECT id, worker_id, hostname, process_id, current_job_type, current_run_id,
                    timestamp, queues, jobs_processed, jobs_failed, is_shutting_down, started_at
-            FROM zapjobs_heartbeats
+            FROM {_heartbeats}
             WHERE timestamp < @cutoff
             """, conn);
 
@@ -574,7 +594,7 @@ public class PostgreSqlJobStorage : IJobStorage
         await conn.OpenAsync(ct);
 
         await using var cmd = new NpgsqlCommand(
-            "DELETE FROM zapjobs_heartbeats WHERE timestamp < @cutoff", conn);
+            $"DELETE FROM {_heartbeats} WHERE timestamp < @cutoff", conn);
         cmd.Parameters.AddWithValue("cutoff", DateTime.UtcNow - threshold);
 
         await cmd.ExecuteNonQueryAsync(ct);
@@ -587,9 +607,9 @@ public class PostgreSqlJobStorage : IJobStorage
         await using var conn = CreateConnection();
         await conn.OpenAsync(ct);
 
-        await using var cmd = new NpgsqlCommand("""
+        await using var cmd = new NpgsqlCommand($"""
             WITH deleted_runs AS (
-                DELETE FROM zapjobs_runs
+                DELETE FROM {_runs}
                 WHERE completed_at < @cutoff
                 RETURNING id
             )
@@ -607,9 +627,9 @@ public class PostgreSqlJobStorage : IJobStorage
         await using var conn = CreateConnection();
         await conn.OpenAsync(ct);
 
-        await using var cmd = new NpgsqlCommand("""
+        await using var cmd = new NpgsqlCommand($"""
             WITH deleted_logs AS (
-                DELETE FROM zapjobs_logs
+                DELETE FROM {_logs}
                 WHERE timestamp < @cutoff
                 RETURNING id
             )
@@ -627,16 +647,16 @@ public class PostgreSqlJobStorage : IJobStorage
         await using var conn = CreateConnection();
         await conn.OpenAsync(ct);
 
-        await using var cmd = new NpgsqlCommand("""
+        await using var cmd = new NpgsqlCommand($"""
             SELECT
-                (SELECT COUNT(*) FROM zapjobs_definitions) as total_jobs,
-                (SELECT COUNT(*) FROM zapjobs_runs) as total_runs,
-                (SELECT COUNT(*) FROM zapjobs_runs WHERE status = 0) as pending_runs,
-                (SELECT COUNT(*) FROM zapjobs_runs WHERE status = 2) as running_runs,
-                (SELECT COUNT(*) FROM zapjobs_runs WHERE status = 3 AND DATE(completed_at) = CURRENT_DATE) as completed_today,
-                (SELECT COUNT(*) FROM zapjobs_runs WHERE status = 4 AND DATE(completed_at) = CURRENT_DATE) as failed_today,
-                (SELECT COUNT(*) FROM zapjobs_heartbeats WHERE timestamp > NOW() - INTERVAL '2 minutes') as active_workers,
-                (SELECT COUNT(*) FROM zapjobs_logs) as total_logs
+                (SELECT COUNT(*) FROM {_definitions}) as total_jobs,
+                (SELECT COUNT(*) FROM {_runs}) as total_runs,
+                (SELECT COUNT(*) FROM {_runs} WHERE status = 0) as pending_runs,
+                (SELECT COUNT(*) FROM {_runs} WHERE status = 2) as running_runs,
+                (SELECT COUNT(*) FROM {_runs} WHERE status = 3 AND DATE(completed_at) = CURRENT_DATE) as completed_today,
+                (SELECT COUNT(*) FROM {_runs} WHERE status = 4 AND DATE(completed_at) = CURRENT_DATE) as failed_today,
+                (SELECT COUNT(*) FROM {_heartbeats} WHERE timestamp > NOW() - INTERVAL '2 minutes') as active_workers,
+                (SELECT COUNT(*) FROM {_logs}) as total_logs
             """, conn);
 
         await using var reader = await cmd.ExecuteReaderAsync(ct);

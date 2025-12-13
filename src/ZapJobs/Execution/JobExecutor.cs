@@ -109,20 +109,24 @@ public class JobExecutor : IJobExecutor
             }
         }
 
-        // Create execution context
+        // Create a scope for scoped services (like DbContext)
+        using var scope = _services.CreateScope();
+        var scopedServices = scope.ServiceProvider;
+
+        // Create execution context with scoped provider
         var context = new JobExecutionContext(
             runId: run.Id,
             jobTypeId: run.JobTypeId,
             triggerType: run.TriggerType,
             triggeredBy: run.TriggeredBy,
-            services: _services,
+            services: scopedServices,
             logger: jobLogger,
             inputDocument: inputDoc);
 
         try
         {
-            // Create job instance
-            var job = (IJob)ActivatorUtilities.CreateInstance(_services, jobType);
+            // Create job instance using scoped provider
+            var job = (IJob)ActivatorUtilities.CreateInstance(scopedServices, jobType);
 
             // Execute with timeout
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
