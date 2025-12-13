@@ -29,15 +29,16 @@ dotnet pack -c Release
 
 ```
 ZapJobs.Core (Abstractions + Entities)
-    ├── Abstractions/    → IJob, IJobStorage, IJobScheduler, IJobTracker, IJobLogger
+    ├── Abstractions/    → IJob, IJobStorage, IJobScheduler, IJobTracker, IJobLogger, IDeadLetterManager
     ├── Configuration/   → ZapJobsOptions, RetryPolicy
     ├── Context/         → JobExecutionContext<T>
-    └── Entities/        → JobDefinition, JobRun, JobLog, JobHeartbeat, JobContinuation
+    └── Entities/        → JobDefinition, JobRun, JobLog, JobHeartbeat, JobContinuation, DeadLetterEntry
 
 ZapJobs (Runtime)
     ├── Execution/       → JobExecutor, RetryHandler
     ├── Scheduling/      → JobSchedulerService, CronScheduler
     ├── Tracking/        → JobTrackerService, JobLoggerService, HeartbeatService
+    ├── DeadLetter/      → DeadLetterManager
     └── HostedServices/  → JobProcessorHostedService, JobRegistrationHostedService
 
 ZapJobs.Storage.InMemory (Dev/Test)
@@ -154,6 +155,60 @@ await _scheduler.ContinueWithAsync(runId, "follow-up-job",
 - `OnFailure` - Run only if parent fails permanently
 - `Always` - Run regardless of outcome
 
+### Dead Letter Queue
+
+Jobs that fail permanently (after exhausting all retries) are automatically moved to the dead letter queue for review and potential reprocessing:
+
+```csharp
+// Inject IDeadLetterManager
+public class AdminService
+{
+    private readonly IDeadLetterManager _dlq;
+
+    // Get pending entries
+    public async Task<IReadOnlyList<DeadLetterEntry>> GetFailedJobs()
+    {
+        return await _dlq.GetEntriesAsync(status: DeadLetterStatus.Pending);
+    }
+
+    // Requeue a failed job
+    public async Task<Guid> RetryJob(Guid deadLetterId)
+    {
+        return await _dlq.RequeueAsync(deadLetterId);
+    }
+
+    // Requeue with modified input
+    public async Task<Guid> RetryJobWithNewInput(Guid deadLetterId, string newInputJson)
+    {
+        return await _dlq.RequeueAsync(deadLetterId, newInput: newInputJson);
+    }
+
+    // Discard a failed job (won't be processed)
+    public async Task DiscardJob(Guid deadLetterId)
+    {
+        await _dlq.DiscardAsync(deadLetterId, notes: "Known issue, not retrying");
+    }
+
+    // Archive for records
+    public async Task ArchiveJob(Guid deadLetterId)
+    {
+        await _dlq.ArchiveAsync(deadLetterId, notes: "Investigated and resolved");
+    }
+
+    // Bulk operations
+    public async Task<int> RequeueAllFailedEmailJobs()
+    {
+        return await _dlq.RequeueAllAsync("send-email");
+    }
+}
+```
+
+**Dead Letter Statuses:**
+- `Pending` - Waiting for review
+- `Requeued` - Sent back to processing
+- `Discarded` - Manually discarded (won't be processed)
+- `Archived` - Kept for records
+
 ### Execution Context
 
 The `JobExecutionContext<T>` provides:
@@ -195,11 +250,12 @@ PostgreSQL tables (see `Migrations/InitialCreate.sql`):
 
 | Table | Purpose |
 |-------|---------|
-| `zapjobs_definitions` | Job type configs and CRON schedules |
-| `zapjobs_runs` | Individual job executions |
-| `zapjobs_logs` | Structured execution logs |
-| `zapjobs_heartbeats` | Worker health monitoring |
-| `zapjobs_continuations` | Job continuation chains |
+| `zapjobs.definitions` | Job type configs and CRON schedules |
+| `zapjobs.runs` | Individual job executions |
+| `zapjobs.logs` | Structured execution logs |
+| `zapjobs.heartbeats` | Worker health monitoring |
+| `zapjobs.continuations` | Job continuation chains |
+| `zapjobs.dead_letter` | Dead letter queue for failed jobs |
 
 ## Retry Policy
 
@@ -287,5 +343,5 @@ app.Run();
 - [ ] Redis storage backend
 - [x] Job continuations (run after another job completes)
 - [ ] Rate limiting per job type
-- [ ] Dead letter queue for failed jobs
+- [x] Dead letter queue for failed jobs
 - [ ] Metrics export (Prometheus/OpenTelemetry)

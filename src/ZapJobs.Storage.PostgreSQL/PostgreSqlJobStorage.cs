@@ -20,6 +20,7 @@ public class PostgreSqlJobStorage : IJobStorage
     private readonly string _logs;
     private readonly string _heartbeats;
     private readonly string _continuations;
+    private readonly string _deadLetter;
 
     public PostgreSqlJobStorage(string connectionString) : this(new PostgreSqlStorageOptions { ConnectionString = connectionString })
     {
@@ -36,6 +37,7 @@ public class PostgreSqlJobStorage : IJobStorage
         _logs = $"{_schema}.logs";
         _heartbeats = $"{_schema}.heartbeats";
         _continuations = $"{_schema}.continuations";
+        _deadLetter = $"{_schema}.dead_letter";
 
         _jsonOptions = new JsonSerializerOptions
         {
@@ -699,6 +701,150 @@ public class PostgreSqlJobStorage : IJobStorage
         await cmd.ExecuteNonQueryAsync(ct);
     }
 
+    // Dead Letter Queue
+
+    public async Task MoveToDeadLetterAsync(JobRun failedRun, CancellationToken ct = default)
+    {
+        await using var conn = CreateConnection();
+        await conn.OpenAsync(ct);
+
+        await using var cmd = new NpgsqlCommand($"""
+            INSERT INTO {_deadLetter} (
+                id, original_run_id, job_type_id, queue, input_json,
+                error_message, error_type, stack_trace, attempt_count,
+                moved_at, status, requeued_at, requeued_run_id, notes
+            ) VALUES (
+                @id, @originalRunId, @jobTypeId, @queue, @inputJson,
+                @errorMessage, @errorType, @stackTrace, @attemptCount,
+                @movedAt, @status, @requeuedAt, @requeuedRunId, @notes
+            )
+            """, conn);
+
+        var entry = new DeadLetterEntry
+        {
+            Id = Guid.NewGuid(),
+            OriginalRunId = failedRun.Id,
+            JobTypeId = failedRun.JobTypeId,
+            Queue = failedRun.Queue,
+            InputJson = failedRun.InputJson,
+            ErrorMessage = failedRun.ErrorMessage ?? string.Empty,
+            ErrorType = failedRun.ErrorType,
+            StackTrace = failedRun.StackTrace,
+            AttemptCount = failedRun.AttemptNumber,
+            MovedAt = DateTime.UtcNow,
+            Status = DeadLetterStatus.Pending
+        };
+
+        AddDeadLetterParameters(cmd, entry);
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    public async Task<DeadLetterEntry?> GetDeadLetterEntryAsync(Guid id, CancellationToken ct = default)
+    {
+        await using var conn = CreateConnection();
+        await conn.OpenAsync(ct);
+
+        await using var cmd = new NpgsqlCommand($"""
+            SELECT id, original_run_id, job_type_id, queue, input_json,
+                   error_message, error_type, stack_trace, attempt_count,
+                   moved_at, status, requeued_at, requeued_run_id, notes
+            FROM {_deadLetter}
+            WHERE id = @id
+            """, conn);
+
+        cmd.Parameters.AddWithValue("id", id);
+
+        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        if (await reader.ReadAsync(ct))
+        {
+            return MapDeadLetterEntry(reader);
+        }
+        return null;
+    }
+
+    public async Task<IReadOnlyList<DeadLetterEntry>> GetDeadLetterEntriesAsync(
+        DeadLetterStatus? status = null,
+        string? jobTypeId = null,
+        int limit = 100,
+        int offset = 0,
+        CancellationToken ct = default)
+    {
+        await using var conn = CreateConnection();
+        await conn.OpenAsync(ct);
+
+        var whereClause = "WHERE 1=1";
+        if (status.HasValue)
+            whereClause += " AND status = @status";
+        if (!string.IsNullOrEmpty(jobTypeId))
+            whereClause += " AND job_type_id = @jobTypeId";
+
+        await using var cmd = new NpgsqlCommand($"""
+            SELECT id, original_run_id, job_type_id, queue, input_json,
+                   error_message, error_type, stack_trace, attempt_count,
+                   moved_at, status, requeued_at, requeued_run_id, notes
+            FROM {_deadLetter}
+            {whereClause}
+            ORDER BY moved_at DESC
+            OFFSET @offset LIMIT @limit
+            """, conn);
+
+        if (status.HasValue)
+            cmd.Parameters.AddWithValue("status", (int)status.Value);
+        if (!string.IsNullOrEmpty(jobTypeId))
+            cmd.Parameters.AddWithValue("jobTypeId", jobTypeId);
+        cmd.Parameters.AddWithValue("offset", offset);
+        cmd.Parameters.AddWithValue("limit", limit);
+
+        var entries = new List<DeadLetterEntry>();
+        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+        {
+            entries.Add(MapDeadLetterEntry(reader));
+        }
+        return entries;
+    }
+
+    public async Task<int> GetDeadLetterCountAsync(DeadLetterStatus? status = null, CancellationToken ct = default)
+    {
+        await using var conn = CreateConnection();
+        await conn.OpenAsync(ct);
+
+        var whereClause = status.HasValue ? "WHERE status = @status" : "";
+
+        await using var cmd = new NpgsqlCommand($"""
+            SELECT COUNT(*) FROM {_deadLetter} {whereClause}
+            """, conn);
+
+        if (status.HasValue)
+            cmd.Parameters.AddWithValue("status", (int)status.Value);
+
+        var result = await cmd.ExecuteScalarAsync(ct);
+        return Convert.ToInt32(result);
+    }
+
+    public async Task UpdateDeadLetterEntryAsync(DeadLetterEntry entry, CancellationToken ct = default)
+    {
+        await using var conn = CreateConnection();
+        await conn.OpenAsync(ct);
+
+        await using var cmd = new NpgsqlCommand($"""
+            UPDATE {_deadLetter} SET
+                status = @status,
+                requeued_at = @requeuedAt,
+                requeued_run_id = @requeuedRunId,
+                notes = @notes
+            WHERE id = @id
+            """, conn);
+
+        cmd.Parameters.AddWithValue("id", entry.Id);
+        cmd.Parameters.AddWithValue("status", (int)entry.Status);
+        cmd.Parameters.AddWithValue("requeuedAt", (object?)entry.RequeuedAt ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("requeuedRunId", (object?)entry.RequeuedRunId ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("notes", (object?)entry.Notes ?? DBNull.Value);
+
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
     // Maintenance
 
     public async Task<int> CleanupOldRunsAsync(TimeSpan retention, CancellationToken ct = default)
@@ -755,7 +901,8 @@ public class PostgreSqlJobStorage : IJobStorage
                 (SELECT COUNT(*) FROM {_runs} WHERE status = 3 AND DATE(completed_at) = CURRENT_DATE) as completed_today,
                 (SELECT COUNT(*) FROM {_runs} WHERE status = 4 AND DATE(completed_at) = CURRENT_DATE) as failed_today,
                 (SELECT COUNT(*) FROM {_heartbeats} WHERE timestamp > NOW() - INTERVAL '2 minutes') as active_workers,
-                (SELECT COUNT(*) FROM {_logs}) as total_logs
+                (SELECT COUNT(*) FROM {_logs}) as total_logs,
+                (SELECT COUNT(*) FROM {_deadLetter} WHERE status = 0) as dead_letter_count
             """, conn);
 
         await using var reader = await cmd.ExecuteReaderAsync(ct);
@@ -769,11 +916,12 @@ public class PostgreSqlJobStorage : IJobStorage
                 CompletedToday: reader.GetInt32(4),
                 FailedToday: reader.GetInt32(5),
                 ActiveWorkers: reader.GetInt32(6),
-                TotalLogEntries: reader.GetInt64(7)
+                TotalLogEntries: reader.GetInt64(7),
+                DeadLetterCount: reader.GetInt32(8)
             );
         }
 
-        return new JobStorageStats(0, 0, 0, 0, 0, 0, 0, 0);
+        return new JobStorageStats(0, 0, 0, 0, 0, 0, 0, 0, 0);
     }
 
     public async Task<int> GetDeadLetterCountAsync(CancellationToken ct = default)
@@ -931,5 +1079,44 @@ public class PostgreSqlJobStorage : IJobStorage
             });
         }
         return heartbeats;
+    }
+
+    private static DeadLetterEntry MapDeadLetterEntry(NpgsqlDataReader reader)
+    {
+        return new DeadLetterEntry
+        {
+            Id = reader.GetGuid(0),
+            OriginalRunId = reader.GetGuid(1),
+            JobTypeId = reader.GetString(2),
+            Queue = reader.GetString(3),
+            InputJson = reader.IsDBNull(4) ? null : reader.GetString(4),
+            ErrorMessage = reader.GetString(5),
+            ErrorType = reader.IsDBNull(6) ? null : reader.GetString(6),
+            StackTrace = reader.IsDBNull(7) ? null : reader.GetString(7),
+            AttemptCount = reader.GetInt32(8),
+            MovedAt = reader.GetDateTime(9),
+            Status = (DeadLetterStatus)reader.GetInt32(10),
+            RequeuedAt = reader.IsDBNull(11) ? null : reader.GetDateTime(11),
+            RequeuedRunId = reader.IsDBNull(12) ? null : reader.GetGuid(12),
+            Notes = reader.IsDBNull(13) ? null : reader.GetString(13)
+        };
+    }
+
+    private static void AddDeadLetterParameters(NpgsqlCommand cmd, DeadLetterEntry entry)
+    {
+        cmd.Parameters.AddWithValue("id", entry.Id);
+        cmd.Parameters.AddWithValue("originalRunId", entry.OriginalRunId);
+        cmd.Parameters.AddWithValue("jobTypeId", entry.JobTypeId);
+        cmd.Parameters.AddWithValue("queue", entry.Queue);
+        cmd.Parameters.AddWithValue("inputJson", (object?)entry.InputJson ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("errorMessage", entry.ErrorMessage);
+        cmd.Parameters.AddWithValue("errorType", (object?)entry.ErrorType ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("stackTrace", (object?)entry.StackTrace ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("attemptCount", entry.AttemptCount);
+        cmd.Parameters.AddWithValue("movedAt", entry.MovedAt);
+        cmd.Parameters.AddWithValue("status", (int)entry.Status);
+        cmd.Parameters.AddWithValue("requeuedAt", (object?)entry.RequeuedAt ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("requeuedRunId", (object?)entry.RequeuedRunId ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("notes", (object?)entry.Notes ?? DBNull.Value);
     }
 }

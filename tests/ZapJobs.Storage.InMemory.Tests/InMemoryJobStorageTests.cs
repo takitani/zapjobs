@@ -1034,4 +1034,275 @@ public class InMemoryJobStorageTests
     }
 
     #endregion
+
+    #region Dead Letter Queue Tests
+
+    [Fact]
+    public async Task MoveToDeadLetterAsync_CreatesEntry()
+    {
+        // Arrange
+        var run = new JobRun
+        {
+            JobTypeId = "test-job",
+            Queue = "default",
+            InputJson = "{\"test\":\"data\"}",
+            ErrorMessage = "Test error",
+            ErrorType = "System.Exception",
+            StackTrace = "at Test.Method()",
+            AttemptNumber = 3
+        };
+        await _storage.EnqueueAsync(run);
+
+        // Act
+        await _storage.MoveToDeadLetterAsync(run);
+
+        // Assert
+        var entries = await _storage.GetDeadLetterEntriesAsync();
+        entries.Should().HaveCount(1);
+        entries[0].OriginalRunId.Should().Be(run.Id);
+        entries[0].JobTypeId.Should().Be("test-job");
+        entries[0].Queue.Should().Be("default");
+        entries[0].InputJson.Should().Be("{\"test\":\"data\"}");
+        entries[0].ErrorMessage.Should().Be("Test error");
+        entries[0].ErrorType.Should().Be("System.Exception");
+        entries[0].StackTrace.Should().Be("at Test.Method()");
+        entries[0].AttemptCount.Should().Be(3);
+        entries[0].Status.Should().Be(DeadLetterStatus.Pending);
+    }
+
+    [Fact]
+    public async Task GetDeadLetterEntryAsync_ExistingEntry_ReturnsEntry()
+    {
+        // Arrange
+        var run = new JobRun { JobTypeId = "test-job", ErrorMessage = "Error" };
+        await _storage.EnqueueAsync(run);
+        await _storage.MoveToDeadLetterAsync(run);
+
+        var entries = await _storage.GetDeadLetterEntriesAsync();
+        var entryId = entries[0].Id;
+
+        // Act
+        var result = await _storage.GetDeadLetterEntryAsync(entryId);
+
+        // Assert
+        result.Should().NotBeNull();
+        result!.Id.Should().Be(entryId);
+    }
+
+    [Fact]
+    public async Task GetDeadLetterEntryAsync_NonExistent_ReturnsNull()
+    {
+        // Act
+        var result = await _storage.GetDeadLetterEntryAsync(Guid.NewGuid());
+
+        // Assert
+        result.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task GetDeadLetterEntriesAsync_FiltersByStatus()
+    {
+        // Arrange
+        var run1 = new JobRun { JobTypeId = "job-1", ErrorMessage = "Error 1" };
+        var run2 = new JobRun { JobTypeId = "job-2", ErrorMessage = "Error 2" };
+        await _storage.EnqueueAsync(run1);
+        await _storage.EnqueueAsync(run2);
+        await _storage.MoveToDeadLetterAsync(run1);
+        await _storage.MoveToDeadLetterAsync(run2);
+
+        // Mark one as requeued
+        var entries = await _storage.GetDeadLetterEntriesAsync();
+        entries[0].Status = DeadLetterStatus.Requeued;
+        await _storage.UpdateDeadLetterEntryAsync(entries[0]);
+
+        // Act
+        var pendingEntries = await _storage.GetDeadLetterEntriesAsync(status: DeadLetterStatus.Pending);
+
+        // Assert
+        pendingEntries.Should().HaveCount(1);
+    }
+
+    [Fact]
+    public async Task GetDeadLetterEntriesAsync_FiltersByJobType()
+    {
+        // Arrange
+        var run1 = new JobRun { JobTypeId = "job-a", ErrorMessage = "Error" };
+        var run2 = new JobRun { JobTypeId = "job-b", ErrorMessage = "Error" };
+        await _storage.EnqueueAsync(run1);
+        await _storage.EnqueueAsync(run2);
+        await _storage.MoveToDeadLetterAsync(run1);
+        await _storage.MoveToDeadLetterAsync(run2);
+
+        // Act
+        var result = await _storage.GetDeadLetterEntriesAsync(jobTypeId: "job-a");
+
+        // Assert
+        result.Should().HaveCount(1);
+        result[0].JobTypeId.Should().Be("job-a");
+    }
+
+    [Fact]
+    public async Task GetDeadLetterEntriesAsync_RespectsLimitAndOffset()
+    {
+        // Arrange
+        for (int i = 0; i < 10; i++)
+        {
+            var run = new JobRun { JobTypeId = $"job-{i}", ErrorMessage = "Error" };
+            await _storage.EnqueueAsync(run);
+            await _storage.MoveToDeadLetterAsync(run);
+        }
+
+        // Act
+        var result = await _storage.GetDeadLetterEntriesAsync(limit: 3, offset: 2);
+
+        // Assert
+        result.Should().HaveCount(3);
+    }
+
+    [Fact]
+    public async Task GetDeadLetterCountAsync_ReturnsCorrectCount()
+    {
+        // Arrange
+        for (int i = 0; i < 5; i++)
+        {
+            var run = new JobRun { JobTypeId = "test", ErrorMessage = "Error" };
+            await _storage.EnqueueAsync(run);
+            await _storage.MoveToDeadLetterAsync(run);
+        }
+
+        // Act
+        var count = await _storage.GetDeadLetterCountAsync();
+
+        // Assert
+        count.Should().Be(5);
+    }
+
+    [Fact]
+    public async Task GetDeadLetterCountAsync_FiltersByStatus()
+    {
+        // Arrange
+        var run1 = new JobRun { JobTypeId = "test", ErrorMessage = "Error" };
+        var run2 = new JobRun { JobTypeId = "test", ErrorMessage = "Error" };
+        await _storage.EnqueueAsync(run1);
+        await _storage.EnqueueAsync(run2);
+        await _storage.MoveToDeadLetterAsync(run1);
+        await _storage.MoveToDeadLetterAsync(run2);
+
+        var entries = await _storage.GetDeadLetterEntriesAsync();
+        entries[0].Status = DeadLetterStatus.Discarded;
+        await _storage.UpdateDeadLetterEntryAsync(entries[0]);
+
+        // Act
+        var pendingCount = await _storage.GetDeadLetterCountAsync(status: DeadLetterStatus.Pending);
+        var discardedCount = await _storage.GetDeadLetterCountAsync(status: DeadLetterStatus.Discarded);
+
+        // Assert
+        pendingCount.Should().Be(1);
+        discardedCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task UpdateDeadLetterEntryAsync_UpdatesEntry()
+    {
+        // Arrange
+        var run = new JobRun { JobTypeId = "test", ErrorMessage = "Error" };
+        await _storage.EnqueueAsync(run);
+        await _storage.MoveToDeadLetterAsync(run);
+
+        var entries = await _storage.GetDeadLetterEntriesAsync();
+        var entry = entries[0];
+
+        // Act
+        entry.Status = DeadLetterStatus.Requeued;
+        entry.RequeuedAt = DateTime.UtcNow;
+        entry.RequeuedRunId = Guid.NewGuid();
+        entry.Notes = "Requeued manually";
+        await _storage.UpdateDeadLetterEntryAsync(entry);
+
+        // Assert
+        var result = await _storage.GetDeadLetterEntryAsync(entry.Id);
+        result!.Status.Should().Be(DeadLetterStatus.Requeued);
+        result.RequeuedAt.Should().NotBeNull();
+        result.RequeuedRunId.Should().NotBeNull();
+        result.Notes.Should().Be("Requeued manually");
+    }
+
+    [Fact]
+    public async Task GetStatsAsync_IncludesDeadLetterCount()
+    {
+        // Arrange
+        var run = new JobRun { JobTypeId = "test", ErrorMessage = "Error" };
+        await _storage.EnqueueAsync(run);
+        await _storage.MoveToDeadLetterAsync(run);
+
+        // Act
+        var stats = await _storage.GetStatsAsync();
+
+        // Assert
+        stats.DeadLetterCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task GetStatsAsync_DeadLetterCountOnlyCountsPending()
+    {
+        // Arrange
+        var run1 = new JobRun { JobTypeId = "test", ErrorMessage = "Error 1" };
+        var run2 = new JobRun { JobTypeId = "test", ErrorMessage = "Error 2" };
+        await _storage.EnqueueAsync(run1);
+        await _storage.EnqueueAsync(run2);
+        await _storage.MoveToDeadLetterAsync(run1);
+        await _storage.MoveToDeadLetterAsync(run2);
+
+        var entries = await _storage.GetDeadLetterEntriesAsync();
+        entries[0].Status = DeadLetterStatus.Requeued;
+        await _storage.UpdateDeadLetterEntryAsync(entries[0]);
+
+        // Act
+        var stats = await _storage.GetStatsAsync();
+
+        // Assert
+        stats.DeadLetterCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task Clear_RemovesDeadLetterEntries()
+    {
+        // Arrange
+        var run = new JobRun { JobTypeId = "test", ErrorMessage = "Error" };
+        await _storage.EnqueueAsync(run);
+        await _storage.MoveToDeadLetterAsync(run);
+
+        // Act
+        _storage.Clear();
+
+        // Assert
+        var count = await _storage.GetDeadLetterCountAsync();
+        count.Should().Be(0);
+    }
+
+    [Theory]
+    [InlineData(DeadLetterStatus.Pending)]
+    [InlineData(DeadLetterStatus.Requeued)]
+    [InlineData(DeadLetterStatus.Discarded)]
+    [InlineData(DeadLetterStatus.Archived)]
+    public async Task UpdateDeadLetterEntryAsync_SupportsDifferentStatuses(DeadLetterStatus status)
+    {
+        // Arrange
+        var run = new JobRun { JobTypeId = "test", ErrorMessage = "Error" };
+        await _storage.EnqueueAsync(run);
+        await _storage.MoveToDeadLetterAsync(run);
+
+        var entries = await _storage.GetDeadLetterEntriesAsync();
+        var entry = entries[0];
+
+        // Act
+        entry.Status = status;
+        await _storage.UpdateDeadLetterEntryAsync(entry);
+
+        // Assert
+        var result = await _storage.GetDeadLetterEntryAsync(entry.Id);
+        result!.Status.Should().Be(status);
+    }
+
+    #endregion
 }
