@@ -921,4 +921,263 @@ public class InMemoryJobStorageTests
     }
 
     #endregion
+
+    #region Batch Tests
+
+    [Fact]
+    public async Task CreateBatchAsync_StoresBatch()
+    {
+        // Arrange
+        var batch = new JobBatch
+        {
+            Name = "test-batch",
+            TotalJobs = 3,
+            CreatedBy = "test-user"
+        };
+
+        // Act
+        await _storage.CreateBatchAsync(batch);
+
+        // Assert
+        var result = await _storage.GetBatchAsync(batch.Id);
+        result.Should().NotBeNull();
+        result!.Name.Should().Be("test-batch");
+        result.TotalJobs.Should().Be(3);
+        result.CreatedBy.Should().Be("test-user");
+        result.Status.Should().Be(BatchStatus.Created);
+    }
+
+    [Fact]
+    public async Task CreateBatchAsync_SetsCreatedAt()
+    {
+        // Arrange
+        var batch = new JobBatch { Name = "test-batch", CreatedAt = default };
+
+        // Act
+        var before = DateTime.UtcNow;
+        await _storage.CreateBatchAsync(batch);
+        var after = DateTime.UtcNow;
+
+        // Assert
+        batch.CreatedAt.Should().BeOnOrAfter(before);
+        batch.CreatedAt.Should().BeOnOrBefore(after);
+    }
+
+    [Fact]
+    public async Task GetBatchAsync_NonExistent_ReturnsNull()
+    {
+        // Act
+        var result = await _storage.GetBatchAsync(Guid.NewGuid());
+
+        // Assert
+        result.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task UpdateBatchAsync_UpdatesStatus()
+    {
+        // Arrange
+        var batch = new JobBatch
+        {
+            Name = "test-batch",
+            Status = BatchStatus.Created,
+            TotalJobs = 3
+        };
+        await _storage.CreateBatchAsync(batch);
+
+        // Act
+        batch.Status = BatchStatus.Completed;
+        batch.CompletedJobs = 3;
+        batch.CompletedAt = DateTime.UtcNow;
+        await _storage.UpdateBatchAsync(batch);
+
+        // Assert
+        var result = await _storage.GetBatchAsync(batch.Id);
+        result!.Status.Should().Be(BatchStatus.Completed);
+        result.CompletedJobs.Should().Be(3);
+        result.CompletedAt.Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task GetNestedBatchesAsync_ReturnsChildBatches()
+    {
+        // Arrange
+        var parentBatch = new JobBatch { Name = "parent-batch" };
+        await _storage.CreateBatchAsync(parentBatch);
+
+        var nestedBatch1 = new JobBatch { Name = "nested-1", ParentBatchId = parentBatch.Id };
+        var nestedBatch2 = new JobBatch { Name = "nested-2", ParentBatchId = parentBatch.Id };
+        var unrelatedBatch = new JobBatch { Name = "unrelated" };
+
+        await _storage.CreateBatchAsync(nestedBatch1);
+        await _storage.CreateBatchAsync(nestedBatch2);
+        await _storage.CreateBatchAsync(unrelatedBatch);
+
+        // Act
+        var result = await _storage.GetNestedBatchesAsync(parentBatch.Id);
+
+        // Assert
+        result.Should().HaveCount(2);
+        result.Should().AllSatisfy(b => b.ParentBatchId.Should().Be(parentBatch.Id));
+    }
+
+    [Fact]
+    public async Task AddBatchJobAsync_LinksBatchAndRun()
+    {
+        // Arrange
+        var batch = new JobBatch { Name = "test-batch" };
+        await _storage.CreateBatchAsync(batch);
+
+        var run = new JobRun { JobTypeId = "test-job", Status = JobRunStatus.Pending, Queue = "default", BatchId = batch.Id };
+        await _storage.EnqueueAsync(run);
+
+        var batchJob = new BatchJob
+        {
+            BatchId = batch.Id,
+            RunId = run.Id,
+            Order = 0
+        };
+
+        // Act
+        await _storage.AddBatchJobAsync(batchJob);
+
+        // Assert
+        var result = await _storage.GetBatchJobsAsync(batch.Id);
+        result.Should().HaveCount(1);
+        result[0].Id.Should().Be(run.Id);
+    }
+
+    [Fact]
+    public async Task GetBatchJobsAsync_OrdersByOrder()
+    {
+        // Arrange
+        var batch = new JobBatch { Name = "test-batch" };
+        await _storage.CreateBatchAsync(batch);
+
+        var run1 = new JobRun { JobTypeId = "test-job", Status = JobRunStatus.Pending, Queue = "default", BatchId = batch.Id };
+        var run2 = new JobRun { JobTypeId = "test-job", Status = JobRunStatus.Pending, Queue = "default", BatchId = batch.Id };
+        var run3 = new JobRun { JobTypeId = "test-job", Status = JobRunStatus.Pending, Queue = "default", BatchId = batch.Id };
+
+        await _storage.EnqueueAsync(run1);
+        await _storage.EnqueueAsync(run2);
+        await _storage.EnqueueAsync(run3);
+
+        await _storage.AddBatchJobAsync(new BatchJob { BatchId = batch.Id, RunId = run3.Id, Order = 2 });
+        await _storage.AddBatchJobAsync(new BatchJob { BatchId = batch.Id, RunId = run1.Id, Order = 0 });
+        await _storage.AddBatchJobAsync(new BatchJob { BatchId = batch.Id, RunId = run2.Id, Order = 1 });
+
+        // Act
+        var result = await _storage.GetBatchJobsAsync(batch.Id);
+
+        // Assert
+        result.Should().HaveCount(3);
+        result[0].Id.Should().Be(run1.Id);
+        result[1].Id.Should().Be(run2.Id);
+        result[2].Id.Should().Be(run3.Id);
+    }
+
+    [Fact]
+    public async Task GetBatchJobsAsync_EmptyBatch_ReturnsEmptyList()
+    {
+        // Act
+        var result = await _storage.GetBatchJobsAsync(Guid.NewGuid());
+
+        // Assert
+        result.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task AddBatchContinuationAsync_StoresContinuation()
+    {
+        // Arrange
+        var batch = new JobBatch { Name = "test-batch" };
+        await _storage.CreateBatchAsync(batch);
+
+        var continuation = new BatchContinuation
+        {
+            BatchId = batch.Id,
+            TriggerType = "success",
+            JobTypeId = "completion-job",
+            InputJson = "{\"test\":\"data\"}"
+        };
+
+        // Act
+        await _storage.AddBatchContinuationAsync(continuation);
+
+        // Assert
+        var result = await _storage.GetBatchContinuationsAsync(batch.Id);
+        result.Should().HaveCount(1);
+        result[0].TriggerType.Should().Be("success");
+        result[0].JobTypeId.Should().Be("completion-job");
+        result[0].InputJson.Should().Be("{\"test\":\"data\"}");
+    }
+
+    [Fact]
+    public async Task GetBatchContinuationsAsync_ReturnsOnlyForBatch()
+    {
+        // Arrange
+        var batch1 = new JobBatch { Name = "batch-1" };
+        var batch2 = new JobBatch { Name = "batch-2" };
+        await _storage.CreateBatchAsync(batch1);
+        await _storage.CreateBatchAsync(batch2);
+
+        await _storage.AddBatchContinuationAsync(new BatchContinuation { BatchId = batch1.Id, TriggerType = "success", JobTypeId = "job-1" });
+        await _storage.AddBatchContinuationAsync(new BatchContinuation { BatchId = batch1.Id, TriggerType = "failure", JobTypeId = "job-2" });
+        await _storage.AddBatchContinuationAsync(new BatchContinuation { BatchId = batch2.Id, TriggerType = "success", JobTypeId = "job-3" });
+
+        // Act
+        var result = await _storage.GetBatchContinuationsAsync(batch1.Id);
+
+        // Assert
+        result.Should().HaveCount(2);
+        result.Should().AllSatisfy(c => c.BatchId.Should().Be(batch1.Id));
+    }
+
+    [Fact]
+    public async Task UpdateBatchContinuationAsync_UpdatesStatusAndRunId()
+    {
+        // Arrange
+        var batch = new JobBatch { Name = "test-batch" };
+        await _storage.CreateBatchAsync(batch);
+
+        var continuation = new BatchContinuation
+        {
+            BatchId = batch.Id,
+            TriggerType = "success",
+            JobTypeId = "test-job",
+            Status = ContinuationStatus.Pending
+        };
+        await _storage.AddBatchContinuationAsync(continuation);
+
+        // Act
+        continuation.Status = ContinuationStatus.Triggered;
+        continuation.ContinuationRunId = Guid.NewGuid();
+        await _storage.UpdateBatchContinuationAsync(continuation);
+
+        // Assert
+        var result = await _storage.GetBatchContinuationsAsync(batch.Id);
+        result[0].Status.Should().Be(ContinuationStatus.Triggered);
+        result[0].ContinuationRunId.Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task Clear_RemovesBatchData()
+    {
+        // Arrange
+        var batch = new JobBatch { Name = "test-batch" };
+        await _storage.CreateBatchAsync(batch);
+        await _storage.AddBatchContinuationAsync(new BatchContinuation { BatchId = batch.Id, TriggerType = "success", JobTypeId = "test-job" });
+
+        // Act
+        _storage.Clear();
+
+        // Assert
+        var batchResult = await _storage.GetBatchAsync(batch.Id);
+        batchResult.Should().BeNull();
+
+        var continuationsResult = await _storage.GetBatchContinuationsAsync(batch.Id);
+        continuationsResult.Should().BeEmpty();
+    }
+
+    #endregion
 }

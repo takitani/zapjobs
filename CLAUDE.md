@@ -30,11 +30,13 @@ dotnet pack -c Release
 ```
 ZapJobs.Core (Abstractions + Entities)
     ├── Abstractions/    → IJob, IJobStorage, IJobScheduler, IJobTracker, IJobLogger
+    ├── Batches/         → IBatchBuilder, IBatchService
     ├── Configuration/   → ZapJobsOptions, RetryPolicy
     ├── Context/         → JobExecutionContext<T>
-    └── Entities/        → JobDefinition, JobRun, JobLog, JobHeartbeat, JobContinuation
+    └── Entities/        → JobDefinition, JobRun, JobLog, JobHeartbeat, JobContinuation, JobBatch
 
 ZapJobs (Runtime)
+    ├── Batches/         → BatchBuilder, BatchService
     ├── Execution/       → JobExecutor, RetryHandler
     ├── Scheduling/      → JobSchedulerService, CronScheduler
     ├── Tracking/        → JobTrackerService, JobLoggerService, HeartbeatService
@@ -154,6 +156,68 @@ await _scheduler.ContinueWithAsync(runId, "follow-up-job",
 - `OnFailure` - Run only if parent fails permanently
 - `Always` - Run regardless of outcome
 
+### Batch Jobs
+
+Create and manage groups of jobs as a single unit:
+
+```csharp
+// Inject IBatchService
+public class MyService
+{
+    private readonly IBatchService _batchService;
+
+    public async Task ProcessCustomers(IEnumerable<Customer> customers)
+    {
+        // Create a batch of jobs
+        var batchId = await _batchService.CreateBatchAsync(
+            "import-customers",
+            batch =>
+            {
+                foreach (var customer in customers)
+                {
+                    batch.Enqueue("process-customer", new { CustomerId = customer.Id });
+                }
+
+                // Optional: run when batch completes
+                batch.OnSuccess("send-summary-email", new { BatchId = "..." });
+                batch.OnFailure("alert-admin", new { Reason = "Import failed" });
+                batch.OnComplete("cleanup-temp-files");
+            },
+            createdBy: "import-service");
+
+        // Check batch progress
+        var batch = await _batchService.GetBatchAsync(batchId);
+        Console.WriteLine($"Progress: {batch.CompletedJobs}/{batch.TotalJobs}");
+    }
+}
+```
+
+**Nested Batches:**
+
+```csharp
+await _batchService.CreateBatchAsync("parent-batch", parent =>
+{
+    parent.Enqueue("job-1");
+
+    // Add a nested batch
+    parent.AddBatch("child-batch", child =>
+    {
+        child.Enqueue("child-job-1");
+        child.Enqueue("child-job-2");
+        child.OnSuccess("child-complete-handler");
+    });
+
+    parent.OnSuccess("parent-complete-handler");
+});
+```
+
+**Batch Status:**
+- `Created` - Batch created, no jobs started
+- `Started` - At least one job has started
+- `Completed` - All jobs completed successfully
+- `Failed` - At least one job failed
+- `Cancelled` - Batch was cancelled
+
 ### Execution Context
 
 The `JobExecutionContext<T>` provides:
@@ -191,15 +255,18 @@ public class ZapJobsOptions
 
 ## Database Schema
 
-PostgreSQL tables (see `Migrations/InitialCreate.sql`):
+PostgreSQL tables (see `Migrations/InitialCreate.sql` and `Migrations/AddBatches.sql`):
 
 | Table | Purpose |
 |-------|---------|
-| `zapjobs_definitions` | Job type configs and CRON schedules |
-| `zapjobs_runs` | Individual job executions |
-| `zapjobs_logs` | Structured execution logs |
-| `zapjobs_heartbeats` | Worker health monitoring |
-| `zapjobs_continuations` | Job continuation chains |
+| `zapjobs.definitions` | Job type configs and CRON schedules |
+| `zapjobs.runs` | Individual job executions |
+| `zapjobs.logs` | Structured execution logs |
+| `zapjobs.heartbeats` | Worker health monitoring |
+| `zapjobs.continuations` | Job continuation chains |
+| `zapjobs.batches` | Batch job groupings |
+| `zapjobs.batch_jobs` | Links runs to batches |
+| `zapjobs.batch_continuations` | Batch-level continuations |
 
 ## Retry Policy
 
@@ -286,6 +353,7 @@ app.Run();
 - [ ] Dashboard UI for monitoring
 - [ ] Redis storage backend
 - [x] Job continuations (run after another job completes)
+- [x] Batch jobs (group and track multiple jobs as a unit)
 - [ ] Rate limiting per job type
 - [ ] Dead letter queue for failed jobs
 - [ ] Metrics export (Prometheus/OpenTelemetry)

@@ -95,4 +95,9 @@ public class JobRun
 
     /// <summary>Additional metadata as JSON</summary>
     public string? MetadataJson { get; set; }
+
+    // Batch
+
+    /// <summary>Batch this run belongs to (if any)</summary>
+    public Guid? BatchId { get; set; }
 }

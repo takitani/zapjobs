@@ -48,7 +48,10 @@ public enum JobTriggerType
     Retry = 4,
 
     /// <summary>Triggered as continuation of another job</summary>
-    Continuation = 5
+    Continuation = 5,
+
+    /// <summary>Triggered as part of a batch</summary>
+    Batch = 6
 }
 
 /// <summary>
@@ -107,4 +110,25 @@ public enum ContinuationStatus
 
     /// <summary>Continuation was skipped (condition not met)</summary>
     Skipped = 2
+}
+
+/// <summary>
+/// Status of a job batch
+/// </summary>
+public enum BatchStatus
+{
+    /// <summary>Batch has been created but no jobs have started</summary>
+    Created = 0,
+
+    /// <summary>At least one job in the batch has started</summary>
+    Started = 1,
+
+    /// <summary>All jobs in the batch completed successfully</summary>
+    Completed = 2,
+
+    /// <summary>At least one job in the batch failed</summary>
+    Failed = 3,
+
+    /// <summary>Batch was cancelled</summary>
+    Cancelled = 4
 }

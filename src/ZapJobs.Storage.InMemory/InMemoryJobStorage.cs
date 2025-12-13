@@ -13,6 +13,9 @@ public class InMemoryJobStorage : IJobStorage
     private readonly ConcurrentDictionary<Guid, List<JobLog>> _logs = new();
     private readonly ConcurrentDictionary<string, JobHeartbeat> _heartbeats = new();
     private readonly ConcurrentDictionary<Guid, JobContinuation> _continuations = new();
+    private readonly ConcurrentDictionary<Guid, JobBatch> _batches = new();
+    private readonly ConcurrentDictionary<Guid, List<BatchJob>> _batchJobs = new();
+    private readonly ConcurrentDictionary<Guid, BatchContinuation> _batchContinuations = new();
     private readonly object _lock = new();
 
     /// <summary>
@@ -317,6 +320,89 @@ public class InMemoryJobStorage : IJobStorage
         return Task.FromResult(stats);
     }
 
+    // Batches
+
+    public Task CreateBatchAsync(JobBatch batch, CancellationToken ct = default)
+    {
+        batch.CreatedAt = DateTime.UtcNow;
+        _batches[batch.Id] = batch;
+        return Task.CompletedTask;
+    }
+
+    public Task<JobBatch?> GetBatchAsync(Guid batchId, CancellationToken ct = default)
+    {
+        _batches.TryGetValue(batchId, out var batch);
+        return Task.FromResult(batch);
+    }
+
+    public Task<IReadOnlyList<JobBatch>> GetNestedBatchesAsync(Guid parentBatchId, CancellationToken ct = default)
+    {
+        var batches = _batches.Values
+            .Where(b => b.ParentBatchId == parentBatchId)
+            .OrderBy(b => b.CreatedAt)
+            .ToList();
+
+        return Task.FromResult<IReadOnlyList<JobBatch>>(batches);
+    }
+
+    public Task UpdateBatchAsync(JobBatch batch, CancellationToken ct = default)
+    {
+        _batches[batch.Id] = batch;
+        return Task.CompletedTask;
+    }
+
+    public Task AddBatchJobAsync(BatchJob batchJob, CancellationToken ct = default)
+    {
+        var jobs = _batchJobs.GetOrAdd(batchJob.BatchId, _ => new List<BatchJob>());
+        lock (jobs)
+        {
+            jobs.Add(batchJob);
+        }
+        return Task.CompletedTask;
+    }
+
+    public Task<IReadOnlyList<JobRun>> GetBatchJobsAsync(Guid batchId, CancellationToken ct = default)
+    {
+        if (_batchJobs.TryGetValue(batchId, out var batchJobs))
+        {
+            lock (batchJobs)
+            {
+                var runIds = batchJobs.OrderBy(bj => bj.Order).Select(bj => bj.RunId).ToList();
+                var runs = runIds
+                    .Select(id => _runs.TryGetValue(id, out var run) ? run : null)
+                    .Where(r => r != null)
+                    .Cast<JobRun>()
+                    .ToList();
+
+                return Task.FromResult<IReadOnlyList<JobRun>>(runs);
+            }
+        }
+        return Task.FromResult<IReadOnlyList<JobRun>>(Array.Empty<JobRun>());
+    }
+
+    public Task AddBatchContinuationAsync(BatchContinuation continuation, CancellationToken ct = default)
+    {
+        continuation.CreatedAt = DateTime.UtcNow;
+        _batchContinuations[continuation.Id] = continuation;
+        return Task.CompletedTask;
+    }
+
+    public Task<IReadOnlyList<BatchContinuation>> GetBatchContinuationsAsync(Guid batchId, CancellationToken ct = default)
+    {
+        var continuations = _batchContinuations.Values
+            .Where(c => c.BatchId == batchId)
+            .OrderBy(c => c.CreatedAt)
+            .ToList();
+
+        return Task.FromResult<IReadOnlyList<BatchContinuation>>(continuations);
+    }
+
+    public Task UpdateBatchContinuationAsync(BatchContinuation continuation, CancellationToken ct = default)
+    {
+        _batchContinuations[continuation.Id] = continuation;
+        return Task.CompletedTask;
+    }
+
     /// <summary>
     /// Clear all data (useful for testing)
     /// </summary>
@@ -327,5 +413,8 @@ public class InMemoryJobStorage : IJobStorage
         _logs.Clear();
         _heartbeats.Clear();
         _continuations.Clear();
+        _batches.Clear();
+        _batchJobs.Clear();
+        _batchContinuations.Clear();
     }
 }
