@@ -89,6 +89,28 @@ public interface IJobStorage
     /// <summary>Update a continuation</summary>
     Task UpdateContinuationAsync(JobContinuation continuation, CancellationToken ct = default);
 
+    // Dead Letter Queue
+
+    /// <summary>Move a failed run to the dead letter queue</summary>
+    Task MoveToDeadLetterAsync(JobRun failedRun, CancellationToken ct = default);
+
+    /// <summary>Get a dead letter entry by ID</summary>
+    Task<DeadLetterEntry?> GetDeadLetterEntryAsync(Guid id, CancellationToken ct = default);
+
+    /// <summary>Get dead letter entries with optional filtering</summary>
+    Task<IReadOnlyList<DeadLetterEntry>> GetDeadLetterEntriesAsync(
+        DeadLetterStatus? status = null,
+        string? jobTypeId = null,
+        int limit = 100,
+        int offset = 0,
+        CancellationToken ct = default);
+
+    /// <summary>Get count of dead letter entries</summary>
+    Task<int> GetDeadLetterCountAsync(DeadLetterStatus? status = null, CancellationToken ct = default);
+
+    /// <summary>Update a dead letter entry</summary>
+    Task UpdateDeadLetterEntryAsync(DeadLetterEntry entry, CancellationToken ct = default);
+
     // Maintenance
 
     /// <summary>Cleanup old completed runs</summary>
@@ -112,4 +134,5 @@ public record JobStorageStats(
     int CompletedToday,
     int FailedToday,
     int ActiveWorkers,
-    long TotalLogEntries);
+    long TotalLogEntries,
+    int DeadLetterCount);

@@ -108,3 +108,21 @@ public enum ContinuationStatus
     /// <summary>Continuation was skipped (condition not met)</summary>
     Skipped = 2
 }
+
+/// <summary>
+/// Status of a dead letter entry
+/// </summary>
+public enum DeadLetterStatus
+{
+    /// <summary>Waiting for review</summary>
+    Pending = 0,
+
+    /// <summary>Sent back to processing</summary>
+    Requeued = 1,
+
+    /// <summary>Manually discarded (won't be processed)</summary>
+    Discarded = 2,
+
+    /// <summary>Archived for records</summary>
+    Archived = 3
+}

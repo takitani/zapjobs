@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using ZapJobs.Core;
+using ZapJobs.DeadLetter;
 using ZapJobs.Execution;
 using ZapJobs.HostedServices;
 using ZapJobs.Scheduling;
@@ -35,10 +36,11 @@ public static class ServiceCollectionExtensions
         services.TryAddSingleton<RetryHandler>();
         services.TryAddSingleton<IJobLoggerFactory, JobLoggerFactory>();
 
-        // Register scheduler and tracker
+        // Register scheduler, tracker, and dead letter manager
         services.TryAddSingleton<IJobScheduler, JobSchedulerService>();
         services.TryAddSingleton<IJobTracker, JobTrackerService>();
         services.TryAddSingleton<IJobExecutor, JobExecutor>();
+        services.TryAddSingleton<IDeadLetterManager, DeadLetterManager>();
 
         // Register heartbeat and processor
         services.TryAddSingleton<HeartbeatService>();
@@ -65,6 +67,7 @@ public static class ServiceCollectionExtensions
         services.TryAddSingleton<IJobScheduler, JobSchedulerService>();
         services.TryAddSingleton<IJobTracker, JobTrackerService>();
         services.TryAddSingleton<IJobExecutor, JobExecutor>();
+        services.TryAddSingleton<IDeadLetterManager, DeadLetterManager>();
         services.TryAddSingleton<HeartbeatService>();
         services.AddHostedService(sp => sp.GetRequiredService<HeartbeatService>());
         services.AddHostedService<JobRegistrationHostedService>();

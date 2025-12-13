@@ -132,6 +132,37 @@ CREATE INDEX IF NOT EXISTS idx_continuations_parent
     ON zapjobs.continuations(parent_run_id)
     WHERE status = 0;
 
+-- Dead Letter Queue table
+CREATE TABLE IF NOT EXISTS zapjobs.dead_letter (
+    id UUID PRIMARY KEY,
+    original_run_id UUID NOT NULL,
+    job_type_id VARCHAR(255) NOT NULL,
+    queue VARCHAR(100) NOT NULL DEFAULT 'default',
+    input_json TEXT,
+    error_message TEXT NOT NULL,
+    error_type VARCHAR(500),
+    stack_trace TEXT,
+    attempt_count INTEGER NOT NULL,
+    moved_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    status INTEGER NOT NULL DEFAULT 0,
+    requeued_at TIMESTAMP,
+    requeued_run_id UUID,
+    notes TEXT
+);
+
+-- Indexes for dead letter queue
+CREATE INDEX IF NOT EXISTS idx_dead_letter_status
+    ON zapjobs.dead_letter(status);
+CREATE INDEX IF NOT EXISTS idx_dead_letter_job_type
+    ON zapjobs.dead_letter(job_type_id);
+CREATE INDEX IF NOT EXISTS idx_dead_letter_moved_at
+    ON zapjobs.dead_letter(moved_at DESC);
+
+-- Index for pending dead letter entries
+CREATE INDEX IF NOT EXISTS idx_dead_letter_pending
+    ON zapjobs.dead_letter(moved_at DESC)
+    WHERE status = 0;
+
 -- Comments
 COMMENT ON SCHEMA zapjobs IS 'ZapJobs background job processing tables';
 COMMENT ON TABLE zapjobs.definitions IS 'Job type configurations and schedules';
@@ -139,3 +170,4 @@ COMMENT ON TABLE zapjobs.runs IS 'Individual job executions';
 COMMENT ON TABLE zapjobs.logs IS 'Execution logs for job runs';
 COMMENT ON TABLE zapjobs.heartbeats IS 'Worker health check heartbeats';
 COMMENT ON TABLE zapjobs.continuations IS 'Job continuation chains';
+COMMENT ON TABLE zapjobs.dead_letter IS 'Dead letter queue for permanently failed jobs';

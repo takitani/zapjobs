@@ -191,15 +191,19 @@ public class JobExecutor : IJobExecutor
         run.CompletedAt = DateTime.UtcNow;
         run.DurationMs = (int)durationMs;
         run.ErrorMessage = "Job timed out";
+        run.ErrorType = nameof(OperationCanceledException);
 
         await _storage.UpdateRunAsync(run, default);
         await logger.ErrorAsync("Job timed out");
+
+        // Move to dead letter queue
+        await _storage.MoveToDeadLetterAsync(run, default);
 
         result.Success = false;
         result.ErrorMessage = "Job timed out";
         result.DurationMs = (int)durationMs;
 
-        _logger.LogWarning("Job {JobTypeId} run {RunId} timed out after {Duration}ms",
+        _logger.LogWarning("Job {JobTypeId} run {RunId} timed out and moved to dead letter queue after {Duration}ms",
             run.JobTypeId, run.Id, durationMs);
 
         // Process continuations after timeout (treated as failure)
@@ -259,6 +263,13 @@ public class JobExecutor : IJobExecutor
             run.ErrorType = ex.GetType().FullName;
 
             await _storage.UpdateRunAsync(run, ct);
+
+            // Move to dead letter queue
+            await _storage.MoveToDeadLetterAsync(run, ct);
+
+            _logger.LogWarning(
+                "Job {JobTypeId} run {RunId} moved to dead letter queue after {Attempts} attempts",
+                run.JobTypeId, run.Id, run.AttemptNumber);
 
             _logger.LogError(ex,
                 "Job {JobTypeId} run {RunId} failed permanently after {Attempts} attempts",

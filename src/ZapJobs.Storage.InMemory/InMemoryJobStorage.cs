@@ -13,6 +13,7 @@ public class InMemoryJobStorage : IJobStorage
     private readonly ConcurrentDictionary<Guid, List<JobLog>> _logs = new();
     private readonly ConcurrentDictionary<string, JobHeartbeat> _heartbeats = new();
     private readonly ConcurrentDictionary<Guid, JobContinuation> _continuations = new();
+    private readonly ConcurrentDictionary<Guid, DeadLetterEntry> _deadLetterEntries = new();
     private readonly object _lock = new();
 
     /// <summary>
@@ -257,6 +258,75 @@ public class InMemoryJobStorage : IJobStorage
         return Task.CompletedTask;
     }
 
+    // Dead Letter Queue
+
+    public Task MoveToDeadLetterAsync(JobRun failedRun, CancellationToken ct = default)
+    {
+        var entry = new DeadLetterEntry
+        {
+            Id = Guid.NewGuid(),
+            OriginalRunId = failedRun.Id,
+            JobTypeId = failedRun.JobTypeId,
+            Queue = failedRun.Queue,
+            InputJson = failedRun.InputJson,
+            ErrorMessage = failedRun.ErrorMessage ?? string.Empty,
+            ErrorType = failedRun.ErrorType,
+            StackTrace = failedRun.StackTrace,
+            AttemptCount = failedRun.AttemptNumber,
+            MovedAt = DateTime.UtcNow,
+            Status = DeadLetterStatus.Pending
+        };
+
+        _deadLetterEntries[entry.Id] = entry;
+        return Task.CompletedTask;
+    }
+
+    public Task<DeadLetterEntry?> GetDeadLetterEntryAsync(Guid id, CancellationToken ct = default)
+    {
+        _deadLetterEntries.TryGetValue(id, out var entry);
+        return Task.FromResult(entry);
+    }
+
+    public Task<IReadOnlyList<DeadLetterEntry>> GetDeadLetterEntriesAsync(
+        DeadLetterStatus? status = null,
+        string? jobTypeId = null,
+        int limit = 100,
+        int offset = 0,
+        CancellationToken ct = default)
+    {
+        var query = _deadLetterEntries.Values.AsEnumerable();
+
+        if (status.HasValue)
+            query = query.Where(e => e.Status == status.Value);
+
+        if (!string.IsNullOrEmpty(jobTypeId))
+            query = query.Where(e => e.JobTypeId == jobTypeId);
+
+        var entries = query
+            .OrderByDescending(e => e.MovedAt)
+            .Skip(offset)
+            .Take(limit)
+            .ToList();
+
+        return Task.FromResult<IReadOnlyList<DeadLetterEntry>>(entries);
+    }
+
+    public Task<int> GetDeadLetterCountAsync(DeadLetterStatus? status = null, CancellationToken ct = default)
+    {
+        var query = _deadLetterEntries.Values.AsEnumerable();
+
+        if (status.HasValue)
+            query = query.Where(e => e.Status == status.Value);
+
+        return Task.FromResult(query.Count());
+    }
+
+    public Task UpdateDeadLetterEntryAsync(DeadLetterEntry entry, CancellationToken ct = default)
+    {
+        _deadLetterEntries[entry.Id] = entry;
+        return Task.CompletedTask;
+    }
+
     // Maintenance
 
     public Task<int> CleanupOldRunsAsync(TimeSpan retention, CancellationToken ct = default)
@@ -311,7 +381,8 @@ public class InMemoryJobStorage : IJobStorage
             CompletedToday: todayRuns.Count(r => r.Status == JobRunStatus.Completed),
             FailedToday: todayRuns.Count(r => r.Status == JobRunStatus.Failed),
             ActiveWorkers: _heartbeats.Count(h => h.Value.Timestamp >= DateTime.UtcNow.AddMinutes(-2)),
-            TotalLogEntries: _logs.Values.Sum(l => l.Count)
+            TotalLogEntries: _logs.Values.Sum(l => l.Count),
+            DeadLetterCount: _deadLetterEntries.Count(e => e.Value.Status == DeadLetterStatus.Pending)
         );
 
         return Task.FromResult(stats);
@@ -327,5 +398,6 @@ public class InMemoryJobStorage : IJobStorage
         _logs.Clear();
         _heartbeats.Clear();
         _continuations.Clear();
+        _deadLetterEntries.Clear();
     }
 }
