@@ -55,6 +55,17 @@ public class ZapJobsOptions
     /// <summary>Delay between storage retry attempts</summary>
     public TimeSpan StorageRetryDelay { get; set; } = TimeSpan.FromSeconds(1);
 
+    /// <summary>
+    /// Global rate limit applied to all job executions.
+    /// If null, no global rate limit is applied.
+    /// </summary>
+    public RateLimitPolicy? GlobalRateLimit { get; set; }
+
+    /// <summary>
+    /// Rate limits per queue. Key is the queue name.
+    /// </summary>
+    public Dictionary<string, RateLimitPolicy> QueueRateLimits { get; set; } = new();
+
     /// <summary>Get default timezone</summary>
     public TimeZoneInfo GetDefaultTimeZone()
     {

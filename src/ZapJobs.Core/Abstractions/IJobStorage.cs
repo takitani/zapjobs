@@ -146,6 +146,20 @@ public interface IJobStorage
     /// <summary>Update a batch continuation</summary>
     Task UpdateBatchContinuationAsync(BatchContinuation continuation, CancellationToken ct = default);
 
+    // Rate Limiting
+
+    /// <summary>Record a rate limit execution for tracking</summary>
+    Task RecordRateLimitExecutionAsync(string key, DateTime executedAt, CancellationToken ct = default);
+
+    /// <summary>Count executions within the given time window</summary>
+    Task<int> CountRateLimitExecutionsAsync(string key, DateTime windowStart, CancellationToken ct = default);
+
+    /// <summary>Get the oldest execution within the time window</summary>
+    Task<DateTime?> GetOldestRateLimitExecutionAsync(string key, DateTime windowStart, CancellationToken ct = default);
+
+    /// <summary>Cleanup old rate limit execution records</summary>
+    Task<int> CleanupRateLimitExecutionsAsync(DateTime olderThan, CancellationToken ct = default);
+
     // Maintenance
 
     /// <summary>Cleanup old completed runs</summary>

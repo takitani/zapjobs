@@ -24,6 +24,7 @@ public class PostgreSqlJobStorage : IJobStorage
     private readonly string _batches;
     private readonly string _batchJobs;
     private readonly string _batchContinuations;
+    private readonly string _rateLimitExecutions;
 
     public PostgreSqlJobStorage(string connectionString) : this(new PostgreSqlStorageOptions { ConnectionString = connectionString })
     {
@@ -44,6 +45,7 @@ public class PostgreSqlJobStorage : IJobStorage
         _batches = $"{_schema}.batches";
         _batchJobs = $"{_schema}.batch_jobs";
         _batchContinuations = $"{_schema}.batch_continuations";
+        _rateLimitExecutions = $"{_schema}.rate_limit_executions";
 
         _jsonOptions = new JsonSerializerOptions
         {
@@ -1064,6 +1066,82 @@ public class PostgreSqlJobStorage : IJobStorage
         cmd.Parameters.AddWithValue("continuationRunId", (object?)continuation.ContinuationRunId ?? DBNull.Value);
 
         await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    // Rate Limiting
+
+    public async Task RecordRateLimitExecutionAsync(string key, DateTime executedAt, CancellationToken ct = default)
+    {
+        await using var conn = CreateConnection();
+        await conn.OpenAsync(ct);
+
+        await using var cmd = new NpgsqlCommand($"""
+            INSERT INTO {_rateLimitExecutions} (id, key, executed_at)
+            VALUES (@id, @key, @executedAt)
+            """, conn);
+
+        cmd.Parameters.AddWithValue("id", Guid.NewGuid());
+        cmd.Parameters.AddWithValue("key", key);
+        cmd.Parameters.AddWithValue("executedAt", executedAt);
+
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    public async Task<int> CountRateLimitExecutionsAsync(string key, DateTime windowStart, CancellationToken ct = default)
+    {
+        await using var conn = CreateConnection();
+        await conn.OpenAsync(ct);
+
+        await using var cmd = new NpgsqlCommand($"""
+            SELECT COUNT(*) FROM {_rateLimitExecutions}
+            WHERE key = @key AND executed_at >= @windowStart
+            """, conn);
+
+        cmd.Parameters.AddWithValue("key", key);
+        cmd.Parameters.AddWithValue("windowStart", windowStart);
+
+        var result = await cmd.ExecuteScalarAsync(ct);
+        return Convert.ToInt32(result);
+    }
+
+    public async Task<DateTime?> GetOldestRateLimitExecutionAsync(string key, DateTime windowStart, CancellationToken ct = default)
+    {
+        await using var conn = CreateConnection();
+        await conn.OpenAsync(ct);
+
+        await using var cmd = new NpgsqlCommand($"""
+            SELECT MIN(executed_at) FROM {_rateLimitExecutions}
+            WHERE key = @key AND executed_at >= @windowStart
+            """, conn);
+
+        cmd.Parameters.AddWithValue("key", key);
+        cmd.Parameters.AddWithValue("windowStart", windowStart);
+
+        var result = await cmd.ExecuteScalarAsync(ct);
+        if (result == null || result == DBNull.Value)
+            return null;
+
+        return (DateTime)result;
+    }
+
+    public async Task<int> CleanupRateLimitExecutionsAsync(DateTime olderThan, CancellationToken ct = default)
+    {
+        await using var conn = CreateConnection();
+        await conn.OpenAsync(ct);
+
+        await using var cmd = new NpgsqlCommand($"""
+            WITH deleted AS (
+                DELETE FROM {_rateLimitExecutions}
+                WHERE executed_at < @olderThan
+                RETURNING id
+            )
+            SELECT COUNT(*) FROM deleted
+            """, conn);
+
+        cmd.Parameters.AddWithValue("olderThan", olderThan);
+
+        var result = await cmd.ExecuteScalarAsync(ct);
+        return Convert.ToInt32(result);
     }
 
     // Maintenance

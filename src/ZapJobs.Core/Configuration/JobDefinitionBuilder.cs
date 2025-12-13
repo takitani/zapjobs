@@ -10,6 +10,7 @@ public class JobDefinitionBuilder
     internal int? TimeoutSeconds { get; private set; }
     internal int? MaxConcurrency { get; private set; }
     internal bool? PreventOverlapping { get; private set; }
+    internal RateLimitPolicy? RateLimit { get; private set; }
 
     /// <summary>
     /// Prevent a new run from starting while another instance is running or pending.
@@ -58,6 +59,51 @@ public class JobDefinitionBuilder
     }
 
     /// <summary>
+    /// Set a rate limit for this job type
+    /// </summary>
+    /// <param name="limit">Maximum executions allowed within the window</param>
+    /// <param name="window">Time window for the rate limit</param>
+    public JobDefinitionBuilder WithRateLimit(int limit, TimeSpan window)
+    {
+        RateLimit = RateLimitPolicy.Create(limit, window);
+        return this;
+    }
+
+    /// <summary>
+    /// Set a rate limit with behavior for this job type
+    /// </summary>
+    /// <param name="limit">Maximum executions allowed within the window</param>
+    /// <param name="window">Time window for the rate limit</param>
+    /// <param name="behavior">What to do when rate limit is exceeded</param>
+    public JobDefinitionBuilder WithRateLimit(int limit, TimeSpan window, RateLimitBehavior behavior)
+    {
+        RateLimit = RateLimitPolicy.Create(limit, window, behavior);
+        return this;
+    }
+
+    /// <summary>
+    /// Set a rate limit with behavior and max delay for this job type
+    /// </summary>
+    /// <param name="limit">Maximum executions allowed within the window</param>
+    /// <param name="window">Time window for the rate limit</param>
+    /// <param name="behavior">What to do when rate limit is exceeded</param>
+    /// <param name="maxDelay">Maximum delay when using Delay behavior</param>
+    public JobDefinitionBuilder WithRateLimit(int limit, TimeSpan window, RateLimitBehavior behavior, TimeSpan maxDelay)
+    {
+        RateLimit = RateLimitPolicy.Create(limit, window, behavior, maxDelay);
+        return this;
+    }
+
+    /// <summary>
+    /// Set a rate limit policy for this job type
+    /// </summary>
+    public JobDefinitionBuilder WithRateLimit(RateLimitPolicy policy)
+    {
+        RateLimit = policy;
+        return this;
+    }
+
+    /// <summary>
     /// Build a JobDefinition with the configured options
     /// </summary>
     internal JobDefinition Build(string jobTypeId)
@@ -73,6 +119,7 @@ public class JobDefinitionBuilder
         if (TimeoutSeconds.HasValue) definition.TimeoutSeconds = TimeoutSeconds.Value;
         if (MaxConcurrency.HasValue) definition.MaxConcurrency = MaxConcurrency.Value;
         if (PreventOverlapping.HasValue) definition.PreventOverlapping = PreventOverlapping.Value;
+        if (RateLimit != null) definition.RateLimit = RateLimit;
 
         return definition;
     }
@@ -87,5 +134,6 @@ public class JobDefinitionBuilder
         if (TimeoutSeconds.HasValue) definition.TimeoutSeconds = TimeoutSeconds.Value;
         if (MaxConcurrency.HasValue) definition.MaxConcurrency = MaxConcurrency.Value;
         if (PreventOverlapping.HasValue) definition.PreventOverlapping = PreventOverlapping.Value;
+        if (RateLimit != null) definition.RateLimit = RateLimit;
     }
 }

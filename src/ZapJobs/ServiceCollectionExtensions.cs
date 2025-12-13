@@ -5,6 +5,7 @@ using ZapJobs.Core;
 using ZapJobs.DeadLetter;
 using ZapJobs.Execution;
 using ZapJobs.HostedServices;
+using ZapJobs.RateLimiting;
 using ZapJobs.Scheduling;
 using ZapJobs.Tracking;
 
@@ -50,11 +51,15 @@ public static class ServiceCollectionExtensions
         // Wire up batch service with executor
         services.AddSingleton<IBatchExecutorInitializer, BatchExecutorInitializer>();
 
+        // Register rate limiter
+        services.TryAddSingleton<IRateLimiter, SlidingWindowRateLimiter>();
+
         // Register heartbeat and processor
         services.TryAddSingleton<HeartbeatService>();
         services.AddHostedService(sp => sp.GetRequiredService<HeartbeatService>());
         services.AddHostedService<JobRegistrationHostedService>();
         services.AddHostedService<JobProcessorHostedService>();
+        services.AddHostedService<RateLimitCleanupService>();
 
         return new ZapJobsBuilder(services);
     }
@@ -82,10 +87,14 @@ public static class ServiceCollectionExtensions
         services.TryAddSingleton<IBatchService>(sp => sp.GetRequiredService<BatchService>());
         services.AddSingleton<IBatchExecutorInitializer, BatchExecutorInitializer>();
 
+        // Register rate limiter
+        services.TryAddSingleton<IRateLimiter, SlidingWindowRateLimiter>();
+
         services.TryAddSingleton<HeartbeatService>();
         services.AddHostedService(sp => sp.GetRequiredService<HeartbeatService>());
         services.AddHostedService<JobRegistrationHostedService>();
         services.AddHostedService<JobProcessorHostedService>();
+        services.AddHostedService<RateLimitCleanupService>();
 
         return new ZapJobsBuilder(services);
     }
@@ -187,6 +196,32 @@ public class ZapJobsBuilder
         Services.AddSingleton<IJobRegistration>(sp => new JobRegistration<TJob>(builder));
 
         return this;
+    }
+
+    /// <summary>
+    /// Configure a rate limit for a specific queue
+    /// </summary>
+    /// <param name="queue">Queue name</param>
+    /// <param name="policy">Rate limit policy to apply</param>
+    public ZapJobsBuilder UseQueueRateLimit(string queue, RateLimitPolicy policy)
+    {
+        Services.Configure<ZapJobsOptions>(options =>
+        {
+            options.QueueRateLimits[queue] = policy;
+        });
+
+        return this;
+    }
+
+    /// <summary>
+    /// Configure a rate limit for a specific queue
+    /// </summary>
+    /// <param name="queue">Queue name</param>
+    /// <param name="limit">Maximum executions within the window</param>
+    /// <param name="window">Time window for the rate limit</param>
+    public ZapJobsBuilder UseQueueRateLimit(string queue, int limit, TimeSpan window)
+    {
+        return UseQueueRateLimit(queue, RateLimitPolicy.Create(limit, window));
     }
 }
 

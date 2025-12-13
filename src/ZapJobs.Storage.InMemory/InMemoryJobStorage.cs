@@ -17,6 +17,7 @@ public class InMemoryJobStorage : IJobStorage
     private readonly ConcurrentDictionary<Guid, JobBatch> _batches = new();
     private readonly ConcurrentDictionary<Guid, List<BatchJob>> _batchJobs = new();
     private readonly ConcurrentDictionary<Guid, BatchContinuation> _batchContinuations = new();
+    private readonly ConcurrentDictionary<string, List<DateTime>> _rateLimitExecutions = new();
     private readonly object _lock = new();
 
     /// <summary>
@@ -428,6 +429,65 @@ public class InMemoryJobStorage : IJobStorage
         return Task.CompletedTask;
     }
 
+    // Rate Limiting
+
+    public Task RecordRateLimitExecutionAsync(string key, DateTime executedAt, CancellationToken ct = default)
+    {
+        var executions = _rateLimitExecutions.GetOrAdd(key, _ => new List<DateTime>());
+        lock (executions)
+        {
+            executions.Add(executedAt);
+        }
+        return Task.CompletedTask;
+    }
+
+    public Task<int> CountRateLimitExecutionsAsync(string key, DateTime windowStart, CancellationToken ct = default)
+    {
+        if (_rateLimitExecutions.TryGetValue(key, out var executions))
+        {
+            lock (executions)
+            {
+                return Task.FromResult(executions.Count(e => e >= windowStart));
+            }
+        }
+        return Task.FromResult(0);
+    }
+
+    public Task<DateTime?> GetOldestRateLimitExecutionAsync(string key, DateTime windowStart, CancellationToken ct = default)
+    {
+        if (_rateLimitExecutions.TryGetValue(key, out var executions))
+        {
+            lock (executions)
+            {
+                var oldest = executions
+                    .Where(e => e >= windowStart)
+                    .OrderBy(e => e)
+                    .FirstOrDefault();
+
+                return Task.FromResult(oldest == default ? null : (DateTime?)oldest);
+            }
+        }
+        return Task.FromResult<DateTime?>(null);
+    }
+
+    public Task<int> CleanupRateLimitExecutionsAsync(DateTime olderThan, CancellationToken ct = default)
+    {
+        var count = 0;
+        foreach (var kvp in _rateLimitExecutions)
+        {
+            lock (kvp.Value)
+            {
+                var oldExecutions = kvp.Value.Where(e => e < olderThan).ToList();
+                foreach (var execution in oldExecutions)
+                {
+                    kvp.Value.Remove(execution);
+                    count++;
+                }
+            }
+        }
+        return Task.FromResult(count);
+    }
+
     // Maintenance
 
     public Task<int> CleanupOldRunsAsync(TimeSpan retention, CancellationToken ct = default)
@@ -503,5 +563,6 @@ public class InMemoryJobStorage : IJobStorage
         _batches.Clear();
         _batchJobs.Clear();
         _batchContinuations.Clear();
+        _rateLimitExecutions.Clear();
     }
 }
