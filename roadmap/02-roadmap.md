@@ -14,7 +14,7 @@ Roadmap priorizado baseado em análise de concorrentes e necessidades do projeto
 | Delayed jobs | Sim | Sim |
 | Recurring/CRON | Sim | Sim |
 | Retries automáticos | Sim | Sim |
-| Continuations (chains) | Sim | **Falta** |
+| Continuations (chains) | Sim | Sim |
 | Batch jobs (atomico) | Pro ($500/yr) | **Falta** |
 | Nested batches | Pro | **Falta** |
 | SQL Server storage | Sim | PostgreSQL |
@@ -45,7 +45,7 @@ Roadmap priorizado baseado em análise de concorrentes e necessidades do projeto
 |---------|---------|---------|
 | Source generators | Sim | **Falta** |
 | SignalR real-time | Sim | **Falta** |
-| Parent-child workflows | Sim | **Falta** |
+| Parent-child workflows | Sim | Sim |
 | EF Core integration | Sim | Npgsql direto |
 | Distributed locking | Sim | Sim |
 | Dashboard | Vue.js | Vanilla JS |
@@ -83,12 +83,12 @@ Roadmap priorizado baseado em análise de concorrentes e necessidades do projeto
 | NuGet Packages | Publicação dos 6 pacotes no NuGet | Médio | Crítico |
 
 #### 1.2 Features Core Faltantes (Inspirado em Hangfire)
-| Item | Descrição | Esforço | Impacto |
-|------|-----------|---------|---------|
-| Job Continuations | `ContinueWith` para encadear jobs | Médio | Alto |
-| Batch Jobs | Criar grupo de jobs atomicamente | Alto | Alto |
-| Dead Letter Queue | Jobs que falharam permanentemente | Médio | Alto |
-| Prevent Overlapping | Opção para evitar execuções simultâneas | Baixo | Médio |
+| Item | Descrição | Esforço | Impacto | Status |
+|------|-----------|---------|---------|--------|
+| Job Continuations | `ContinueWith` para encadear jobs | Médio | Alto | ✅ Feito |
+| Batch Jobs | Criar grupo de jobs atomicamente | Alto | Alto | |
+| Dead Letter Queue | Jobs que falharam permanentemente | Médio | Alto | |
+| Prevent Overlapping | Opção para evitar execuções simultâneas | Baixo | Médio | |
 
 ### Fase 2: Observability (Média Prioridade)
 
@@ -209,7 +209,7 @@ O que já fazemos melhor:
 - NuGet packages publicados
 
 ### v1.2 - Chaining
-- Job continuations
+- ~~Job continuations~~ ✅
 - Prevent overlapping
 - Dead letter queue
 
