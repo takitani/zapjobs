@@ -1,3 +1,4 @@
+using Xunit;
 using FluentAssertions;
 using ZapJobs.Core;
 using ZapJobs.Storage.InMemory;
