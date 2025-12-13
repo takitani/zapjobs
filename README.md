@@ -115,6 +115,41 @@ public class MyController : ControllerBase
 }
 ```
 
+## Testing
+
+Run all tests:
+
+```bash
+dotnet test
+```
+
+Run tests with coverage:
+
+```bash
+dotnet test --collect:"XPlat Code Coverage"
+```
+
+Run specific test class:
+
+```bash
+dotnet test --filter "FullyQualifiedName~RetryPolicyTests"
+```
+
+Generate coverage report (requires `reportgenerator` tool):
+
+```bash
+dotnet tool install -g dotnet-reportgenerator-globaltool
+reportgenerator -reports:"**/coverage.cobertura.xml" -targetdir:"coverage" -reporttypes:Html
+```
+
+### Test Projects
+
+| Project | Description |
+|---------|-------------|
+| `ZapJobs.Core.Tests` | Tests for core abstractions, entities, and configuration |
+| `ZapJobs.Tests` | Tests for scheduling, execution, and retry logic |
+| `ZapJobs.Storage.InMemory.Tests` | Tests for in-memory storage implementation |
+
 ## Project Structure
 
 | Package | Description |
