@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using ZapJobs.Core;
 using ZapJobs.Execution;
+using ZapJobs.RateLimiting;
 using ZapJobs.Scheduling;
 using ZapJobs.Tracking;
 
@@ -17,6 +18,7 @@ public class JobProcessorHostedService : BackgroundService
     private readonly IJobExecutor _executor;
     private readonly ICronScheduler _cronScheduler;
     private readonly HeartbeatService _heartbeatService;
+    private readonly IRateLimiter _rateLimiter;
     private readonly ZapJobsOptions _options;
     private readonly ILogger<JobProcessorHostedService> _logger;
     private readonly SemaphoreSlim _workerSemaphore;
@@ -26,6 +28,7 @@ public class JobProcessorHostedService : BackgroundService
         IJobExecutor executor,
         ICronScheduler cronScheduler,
         HeartbeatService heartbeatService,
+        IRateLimiter rateLimiter,
         IOptions<ZapJobsOptions> options,
         ILogger<JobProcessorHostedService> logger)
     {
@@ -33,6 +36,7 @@ public class JobProcessorHostedService : BackgroundService
         _executor = executor;
         _cronScheduler = cronScheduler;
         _heartbeatService = heartbeatService;
+        _rateLimiter = rateLimiter;
         _options = options.Value;
         _logger = logger;
         _workerSemaphore = new SemaphoreSlim(_options.WorkerCount, _options.WorkerCount);
@@ -258,6 +262,14 @@ public class JobProcessorHostedService : BackgroundService
                 return;
             }
 
+            // Check rate limits before execution
+            var rateLimitResult = await TryAcquireRateLimitAsync(run, ct);
+            if (!rateLimitResult.Allowed)
+            {
+                // Rate limit was handled (delayed, rejected, or skipped)
+                return;
+            }
+
             _logger.LogDebug("Processing job {JobTypeId} run {RunId}", run.JobTypeId, run.Id);
 
             var result = await _executor.ExecuteAsync(run, ct);
@@ -279,6 +291,109 @@ public class JobProcessorHostedService : BackgroundService
         finally
         {
             _workerSemaphore.Release();
+        }
+    }
+
+    private async Task<RateLimitResult> TryAcquireRateLimitAsync(JobRun run, CancellationToken ct)
+    {
+        // Get job definition to check for rate limit policy
+        var definition = await _storage.GetJobDefinitionAsync(run.JobTypeId, ct);
+
+        // Check global rate limit first
+        if (_options.GlobalRateLimit != null)
+        {
+            var globalResult = await _rateLimiter.AcquireAsync(
+                SlidingWindowRateLimiter.GlobalKey,
+                _options.GlobalRateLimit,
+                ct);
+
+            if (!globalResult.Allowed)
+            {
+                await HandleRateLimitExceededAsync(run, _options.GlobalRateLimit, globalResult, "global", ct);
+                return globalResult;
+            }
+        }
+
+        // Check queue rate limit
+        if (_options.QueueRateLimits.TryGetValue(run.Queue, out var queuePolicy))
+        {
+            var queueResult = await _rateLimiter.AcquireAsync(
+                SlidingWindowRateLimiter.GetQueueKey(run.Queue),
+                queuePolicy,
+                ct);
+
+            if (!queueResult.Allowed)
+            {
+                await HandleRateLimitExceededAsync(run, queuePolicy, queueResult, $"queue:{run.Queue}", ct);
+                return queueResult;
+            }
+        }
+
+        // Check job type rate limit
+        if (definition?.RateLimit != null)
+        {
+            var jobResult = await _rateLimiter.AcquireAsync(
+                SlidingWindowRateLimiter.GetJobTypeKey(run.JobTypeId),
+                definition.RateLimit,
+                ct);
+
+            if (!jobResult.Allowed)
+            {
+                await HandleRateLimitExceededAsync(run, definition.RateLimit, jobResult, $"job:{run.JobTypeId}", ct);
+                return jobResult;
+            }
+        }
+
+        return RateLimitResult.Allow();
+    }
+
+    private async Task HandleRateLimitExceededAsync(
+        JobRun run,
+        RateLimitPolicy policy,
+        RateLimitResult result,
+        string limitKey,
+        CancellationToken ct)
+    {
+        switch (policy.Behavior)
+        {
+            case RateLimitBehavior.Delay:
+                // Reschedule for later
+                var delay = result.RetryAfter ?? TimeSpan.FromSeconds(30);
+                if (delay > policy.MaxDelay)
+                    delay = policy.MaxDelay;
+
+                run.Status = JobRunStatus.Scheduled;
+                run.ScheduledAt = DateTime.UtcNow.Add(delay);
+                await _storage.UpdateRunAsync(run, ct);
+
+                _logger.LogDebug(
+                    "Rate limited {LimitKey}, job {JobTypeId} run {RunId} delayed by {Delay}",
+                    limitKey, run.JobTypeId, run.Id, delay);
+                break;
+
+            case RateLimitBehavior.Reject:
+                // Mark as failed
+                run.Status = JobRunStatus.Failed;
+                run.ErrorMessage = $"Rate limit exceeded for {limitKey}";
+                run.CompletedAt = DateTime.UtcNow;
+                await _storage.UpdateRunAsync(run, ct);
+                _heartbeatService.IncrementFailed();
+
+                _logger.LogWarning(
+                    "Rate limited {LimitKey}, job {JobTypeId} run {RunId} rejected",
+                    limitKey, run.JobTypeId, run.Id);
+                break;
+
+            case RateLimitBehavior.Skip:
+                // Mark as cancelled (skipped)
+                run.Status = JobRunStatus.Cancelled;
+                run.CompletedAt = DateTime.UtcNow;
+                await _storage.UpdateRunAsync(run, ct);
+
+                _logger.LogDebug(
+                    "Rate limited {LimitKey}, job {JobTypeId} run {RunId} skipped",
+                    limitKey, run.JobTypeId, run.Id);
+                break;
         }
     }
 

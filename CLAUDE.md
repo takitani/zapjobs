@@ -33,12 +33,14 @@ ZapJobs.Core (Abstractions + Entities)
     ├── Batches/         → IBatchBuilder, IBatchService
     ├── Configuration/   → ZapJobsOptions, RetryPolicy
     ├── Context/         → JobExecutionContext<T>
+    ├── RateLimiting/    → IRateLimiter, RateLimitPolicy
     └── Entities/        → JobDefinition, JobRun, JobLog, JobHeartbeat, JobContinuation, DeadLetterEntry, JobBatch
 
 ZapJobs (Runtime)
     ├── Batches/         → BatchBuilder, BatchService
     ├── DeadLetter/      → DeadLetterManager
     ├── Execution/       → JobExecutor, RetryHandler
+    ├── RateLimiting/    → SlidingWindowRateLimiter, RateLimitCleanupService
     ├── Scheduling/      → JobSchedulerService, CronScheduler
     ├── Tracking/        → JobTrackerService, JobLoggerService, HeartbeatService
     └── HostedServices/  → JobProcessorHostedService, JobRegistrationHostedService
@@ -289,6 +291,51 @@ context.IncrementFailed()
 context.SetOutput(result)  // For IJob<TInput, TOutput>
 ```
 
+### Rate Limiting
+
+Control job execution rates to prevent overwhelming external services or resources:
+
+```csharp
+// Per job type rate limiting via fluent API
+services
+    .AddZapJobs(options =>
+    {
+        options.WorkerCount = 4;
+
+        // Global rate limit (all jobs)
+        options.GlobalRateLimit = RateLimitPolicy.Create(100, TimeSpan.FromMinutes(1));
+
+        // Per-queue rate limits
+        options.QueueRateLimits["api-calls"] = RateLimitPolicy.Create(50, TimeSpan.FromMinutes(1));
+    })
+    .AddJob<SendEmailJob>(job => job
+        .WithRateLimit(10, TimeSpan.FromMinutes(1)))  // 10 per minute
+    .AddJob<ApiCallJob>(job => job
+        .WithRateLimit(100, TimeSpan.FromHours(1), RateLimitBehavior.Reject));
+```
+
+**Rate Limit Behaviors:**
+- `Delay` (default) - Reschedule job execution until rate limit allows
+- `Reject` - Fail the job immediately
+- `Skip` - Cancel silently (useful for recurring jobs)
+
+**Rate Limit Scopes:**
+- **Job Type** - Configure on `JobDefinitionBuilder.WithRateLimit()`
+- **Queue** - Configure on `ZapJobsOptions.QueueRateLimits`
+- **Global** - Configure on `ZapJobsOptions.GlobalRateLimit`
+
+Rate limits are checked in order: Global → Queue → Job Type. All applicable limits must allow execution.
+
+```csharp
+// Advanced configuration with max delay for Delay behavior
+.AddJob<SlackNotificationJob>(job => job
+    .WithRateLimit(
+        limit: 5,
+        window: TimeSpan.FromSeconds(30),
+        behavior: RateLimitBehavior.Delay,
+        maxDelay: TimeSpan.FromMinutes(5)))
+```
+
 ## Configuration Options
 
 ```csharp
@@ -310,7 +357,7 @@ public class ZapJobsOptions
 
 ## Database Schema
 
-PostgreSQL tables (see `Migrations/InitialCreate.sql` and `Migrations/AddBatches.sql`):
+PostgreSQL tables (see `Migrations/InitialCreate.sql`, `Migrations/AddBatches.sql`, and `Migrations/AddRateLimiting.sql`):
 
 | Table | Purpose |
 |-------|---------|
@@ -323,6 +370,7 @@ PostgreSQL tables (see `Migrations/InitialCreate.sql` and `Migrations/AddBatches
 | `zapjobs.batches` | Batch job groupings |
 | `zapjobs.batch_jobs` | Links runs to batches |
 | `zapjobs.batch_continuations` | Batch-level continuations |
+| `zapjobs.rate_limit_executions` | Rate limit tracking for sliding window |
 
 ## Retry Policy
 
@@ -410,6 +458,6 @@ app.Run();
 - [ ] Redis storage backend
 - [x] Job continuations (run after another job completes)
 - [x] Batch jobs (group and track multiple jobs as a unit)
-- [ ] Rate limiting per job type
+- [x] Rate limiting per job type
 - [x] Dead letter queue for failed jobs
 - [ ] Metrics export (Prometheus/OpenTelemetry)

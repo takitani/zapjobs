@@ -51,6 +51,11 @@ public class JobDefinition
     /// </summary>
     public bool PreventOverlapping { get; set; }
 
+    /// <summary>
+    /// Rate limit policy for this job type. If null, no rate limiting is applied.
+    /// </summary>
+    public RateLimitPolicy? RateLimit { get; set; }
+
     // State
 
     /// <summary>When this job last ran</summary>
