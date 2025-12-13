@@ -106,6 +106,15 @@ public class InMemoryJobStorage : IJobStorage
         return Task.FromResult<IReadOnlyList<JobRun>>(runs);
     }
 
+    public Task<bool> HasActiveRunAsync(string jobTypeId, CancellationToken ct = default)
+    {
+        var hasActive = _runs.Values.Any(r =>
+            r.JobTypeId == jobTypeId &&
+            (r.Status == JobRunStatus.Pending || r.Status == JobRunStatus.Running));
+
+        return Task.FromResult(hasActive);
+    }
+
     public Task UpdateRunAsync(JobRun run, CancellationToken ct = default)
     {
         _runs[run.Id] = run;

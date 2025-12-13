@@ -45,6 +45,12 @@ public class JobDefinition
     /// <summary>Maximum concurrent executions allowed</summary>
     public int MaxConcurrency { get; set; } = 1;
 
+    /// <summary>
+    /// If true, a new run won't be created while another is still running or pending.
+    /// Useful for long-running jobs where overlapping executions are undesirable.
+    /// </summary>
+    public bool PreventOverlapping { get; set; }
+
     // State
 
     /// <summary>When this job last ran</summary>

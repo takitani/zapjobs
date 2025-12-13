@@ -42,6 +42,15 @@ public interface IJobScheduler
     /// <returns>Job type ID for reference</returns>
     Task<string> RecurringAsync(string jobTypeId, TimeSpan interval, object? input = null, CancellationToken ct = default);
 
+    /// <summary>Schedule a recurring job with fixed interval and options</summary>
+    /// <param name="jobTypeId">Job type identifier</param>
+    /// <param name="interval">Time between executions</param>
+    /// <param name="input">Optional input data</param>
+    /// <param name="options">Recurring job options (prevent overlapping, queue, etc.)</param>
+    /// <param name="ct">Cancellation token</param>
+    /// <returns>Job type ID for reference</returns>
+    Task<string> RecurringAsync(string jobTypeId, TimeSpan interval, object? input, RecurringJobOptions options, CancellationToken ct = default);
+
     /// <summary>Schedule a recurring job with CRON expression</summary>
     /// <param name="jobTypeId">Job type identifier</param>
     /// <param name="cronExpression">CRON expression (5 or 6 parts)</param>
@@ -50,6 +59,15 @@ public interface IJobScheduler
     /// <param name="ct">Cancellation token</param>
     /// <returns>Job type ID for reference</returns>
     Task<string> RecurringAsync(string jobTypeId, string cronExpression, object? input = null, TimeZoneInfo? timeZone = null, CancellationToken ct = default);
+
+    /// <summary>Schedule a recurring job with CRON expression and options</summary>
+    /// <param name="jobTypeId">Job type identifier</param>
+    /// <param name="cronExpression">CRON expression (5 or 6 parts)</param>
+    /// <param name="input">Optional input data</param>
+    /// <param name="options">Recurring job options (prevent overlapping, queue, etc.)</param>
+    /// <param name="ct">Cancellation token</param>
+    /// <returns>Job type ID for reference</returns>
+    Task<string> RecurringAsync(string jobTypeId, string cronExpression, object? input, RecurringJobOptions options, CancellationToken ct = default);
 
     /// <summary>Cancel a pending or running job</summary>
     /// <param name="runId">Run ID to cancel</param>
