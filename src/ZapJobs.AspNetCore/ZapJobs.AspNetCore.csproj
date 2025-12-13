@@ -17,6 +17,12 @@
     <None Include="README.md" Pack="true" PackagePath="\" Condition="Exists('README.md')" />
   </ItemGroup>
 
+  <!-- Dashboard embedded resources -->
+  <ItemGroup>
+    <EmbeddedResource Include="Dashboard\wwwroot\**\*" />
+    <EmbeddedResource Include="Dashboard\Templates\**\*" />
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\ZapJobs\ZapJobs.csproj" />
   </ItemGroup>
