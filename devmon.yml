@@ -1,0 +1,36 @@
+name: "ZapJobs"
+dependency_timeout: 60
+
+services:
+  - name: "PostgreSQL"
+    type: docker
+    container: "zapjobs-postgres"
+    image: "postgres:17-alpine"
+    network: host
+    env:
+      POSTGRES_DB: zapjobs_dev
+      POSTGRES_USER: zapjobs
+      POSTGRES_PASSWORD: zapjobs_dev
+    health_cmd: "docker exec zapjobs-postgres pg_isready -U zapjobs -d zapjobs_dev"
+
+  - name: "Build"
+    command: "dotnet build ZapJobs.slnx"
+    oneshot: true
+    depends_on:
+      - name: "PostgreSQL"
+        condition: healthy
+
+  - name: "Tests"
+    command: "dotnet test ZapJobs.slnx --verbosity normal"
+    oneshot: true
+    optional: true
+    depends_on:
+      - name: "Build"
+        condition: completed
+
+header:
+  urls:
+    - label: "PostgreSQL"
+      url: "localhost:5432"
+
+footer: "zapjobs - Background Job Scheduler"

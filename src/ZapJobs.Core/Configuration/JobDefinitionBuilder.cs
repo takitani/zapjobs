@@ -80,7 +80,7 @@ public class JobDefinitionBuilder
     /// <summary>
     /// Apply the configured options to an existing JobDefinition
     /// </summary>
-    internal void ApplyTo(JobDefinition definition)
+    public void ApplyTo(JobDefinition definition)
     {
         if (Queue != null) definition.Queue = Queue;
         if (MaxRetries.HasValue) definition.MaxRetries = MaxRetries.Value;

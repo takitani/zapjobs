@@ -94,7 +94,7 @@ public static class ServiceCollectionExtensions
 /// <summary>
 /// Interface for initializing batch-executor integration
 /// </summary>
-internal interface IBatchExecutorInitializer
+public interface IBatchExecutorInitializer
 {
     void Initialize();
 }
