@@ -117,6 +117,35 @@ public interface IJobStorage
     /// <summary>Update a dead letter entry</summary>
     Task UpdateDeadLetterEntryAsync(DeadLetterEntry entry, CancellationToken ct = default);
 
+    // Batches
+
+    /// <summary>Create a new batch</summary>
+    Task CreateBatchAsync(JobBatch batch, CancellationToken ct = default);
+
+    /// <summary>Get a batch by ID</summary>
+    Task<JobBatch?> GetBatchAsync(Guid batchId, CancellationToken ct = default);
+
+    /// <summary>Get nested batches within a parent batch</summary>
+    Task<IReadOnlyList<JobBatch>> GetNestedBatchesAsync(Guid parentBatchId, CancellationToken ct = default);
+
+    /// <summary>Update a batch</summary>
+    Task UpdateBatchAsync(JobBatch batch, CancellationToken ct = default);
+
+    /// <summary>Add a job link to a batch</summary>
+    Task AddBatchJobAsync(BatchJob batchJob, CancellationToken ct = default);
+
+    /// <summary>Get all job runs in a batch</summary>
+    Task<IReadOnlyList<JobRun>> GetBatchJobsAsync(Guid batchId, CancellationToken ct = default);
+
+    /// <summary>Add a batch continuation</summary>
+    Task AddBatchContinuationAsync(BatchContinuation continuation, CancellationToken ct = default);
+
+    /// <summary>Get batch continuations</summary>
+    Task<IReadOnlyList<BatchContinuation>> GetBatchContinuationsAsync(Guid batchId, CancellationToken ct = default);
+
+    /// <summary>Update a batch continuation</summary>
+    Task UpdateBatchContinuationAsync(BatchContinuation continuation, CancellationToken ct = default);
+
     // Maintenance
 
     /// <summary>Cleanup old completed runs</summary>

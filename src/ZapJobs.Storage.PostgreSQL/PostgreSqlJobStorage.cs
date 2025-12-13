@@ -21,6 +21,9 @@ public class PostgreSqlJobStorage : IJobStorage
     private readonly string _heartbeats;
     private readonly string _continuations;
     private readonly string _deadLetter;
+    private readonly string _batches;
+    private readonly string _batchJobs;
+    private readonly string _batchContinuations;
 
     public PostgreSqlJobStorage(string connectionString) : this(new PostgreSqlStorageOptions { ConnectionString = connectionString })
     {
@@ -38,6 +41,9 @@ public class PostgreSqlJobStorage : IJobStorage
         _heartbeats = $"{_schema}.heartbeats";
         _continuations = $"{_schema}.continuations";
         _deadLetter = $"{_schema}.dead_letter";
+        _batches = $"{_schema}.batches";
+        _batchJobs = $"{_schema}.batch_jobs";
+        _batchContinuations = $"{_schema}.batch_continuations";
 
         _jsonOptions = new JsonSerializerOptions
         {
@@ -845,6 +851,221 @@ public class PostgreSqlJobStorage : IJobStorage
         await cmd.ExecuteNonQueryAsync(ct);
     }
 
+    // Batches
+
+    public async Task CreateBatchAsync(JobBatch batch, CancellationToken ct = default)
+    {
+        await using var conn = CreateConnection();
+        await conn.OpenAsync(ct);
+
+        await using var cmd = new NpgsqlCommand($"""
+            INSERT INTO {_batches} (
+                id, name, parent_batch_id, status, total_jobs, completed_jobs, failed_jobs,
+                created_by, created_at, started_at, completed_at, expires_at
+            ) VALUES (
+                @id, @name, @parentBatchId, @status, @totalJobs, @completedJobs, @failedJobs,
+                @createdBy, @createdAt, @startedAt, @completedAt, @expiresAt
+            )
+            """, conn);
+
+        cmd.Parameters.AddWithValue("id", batch.Id);
+        cmd.Parameters.AddWithValue("name", batch.Name);
+        cmd.Parameters.AddWithValue("parentBatchId", (object?)batch.ParentBatchId ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("status", (int)batch.Status);
+        cmd.Parameters.AddWithValue("totalJobs", batch.TotalJobs);
+        cmd.Parameters.AddWithValue("completedJobs", batch.CompletedJobs);
+        cmd.Parameters.AddWithValue("failedJobs", batch.FailedJobs);
+        cmd.Parameters.AddWithValue("createdBy", (object?)batch.CreatedBy ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("createdAt", batch.CreatedAt);
+        cmd.Parameters.AddWithValue("startedAt", (object?)batch.StartedAt ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("completedAt", (object?)batch.CompletedAt ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("expiresAt", (object?)batch.ExpiresAt ?? DBNull.Value);
+
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    public async Task<JobBatch?> GetBatchAsync(Guid batchId, CancellationToken ct = default)
+    {
+        await using var conn = CreateConnection();
+        await conn.OpenAsync(ct);
+
+        await using var cmd = new NpgsqlCommand($"""
+            SELECT id, name, parent_batch_id, status, total_jobs, completed_jobs, failed_jobs,
+                   created_by, created_at, started_at, completed_at, expires_at
+            FROM {_batches}
+            WHERE id = @id
+            """, conn);
+
+        cmd.Parameters.AddWithValue("id", batchId);
+
+        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        if (await reader.ReadAsync(ct))
+        {
+            return MapBatch(reader);
+        }
+        return null;
+    }
+
+    public async Task<IReadOnlyList<JobBatch>> GetNestedBatchesAsync(Guid parentBatchId, CancellationToken ct = default)
+    {
+        await using var conn = CreateConnection();
+        await conn.OpenAsync(ct);
+
+        await using var cmd = new NpgsqlCommand($"""
+            SELECT id, name, parent_batch_id, status, total_jobs, completed_jobs, failed_jobs,
+                   created_by, created_at, started_at, completed_at, expires_at
+            FROM {_batches}
+            WHERE parent_batch_id = @parentBatchId
+            ORDER BY created_at
+            """, conn);
+
+        cmd.Parameters.AddWithValue("parentBatchId", parentBatchId);
+
+        var batches = new List<JobBatch>();
+        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+        {
+            batches.Add(MapBatch(reader));
+        }
+        return batches;
+    }
+
+    public async Task UpdateBatchAsync(JobBatch batch, CancellationToken ct = default)
+    {
+        await using var conn = CreateConnection();
+        await conn.OpenAsync(ct);
+
+        await using var cmd = new NpgsqlCommand($"""
+            UPDATE {_batches} SET
+                status = @status,
+                total_jobs = @totalJobs,
+                completed_jobs = @completedJobs,
+                failed_jobs = @failedJobs,
+                started_at = @startedAt,
+                completed_at = @completedAt,
+                expires_at = @expiresAt
+            WHERE id = @id
+            """, conn);
+
+        cmd.Parameters.AddWithValue("id", batch.Id);
+        cmd.Parameters.AddWithValue("status", (int)batch.Status);
+        cmd.Parameters.AddWithValue("totalJobs", batch.TotalJobs);
+        cmd.Parameters.AddWithValue("completedJobs", batch.CompletedJobs);
+        cmd.Parameters.AddWithValue("failedJobs", batch.FailedJobs);
+        cmd.Parameters.AddWithValue("startedAt", (object?)batch.StartedAt ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("completedAt", (object?)batch.CompletedAt ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("expiresAt", (object?)batch.ExpiresAt ?? DBNull.Value);
+
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    public async Task AddBatchJobAsync(BatchJob batchJob, CancellationToken ct = default)
+    {
+        await using var conn = CreateConnection();
+        await conn.OpenAsync(ct);
+
+        await using var cmd = new NpgsqlCommand($"""
+            INSERT INTO {_batchJobs} (batch_id, run_id, order_num)
+            VALUES (@batchId, @runId, @orderNum)
+            """, conn);
+
+        cmd.Parameters.AddWithValue("batchId", batchJob.BatchId);
+        cmd.Parameters.AddWithValue("runId", batchJob.RunId);
+        cmd.Parameters.AddWithValue("orderNum", batchJob.Order);
+
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    public async Task<IReadOnlyList<JobRun>> GetBatchJobsAsync(Guid batchId, CancellationToken ct = default)
+    {
+        await using var conn = CreateConnection();
+        await conn.OpenAsync(ct);
+
+        await using var cmd = new NpgsqlCommand($"""
+            SELECT r.id, r.job_type_id, r.status, r.trigger_type, r.triggered_by, r.worker_id, r.queue,
+                   r.created_at, r.scheduled_at, r.started_at, r.completed_at, r.duration_ms,
+                   r.progress, r.total, r.progress_message,
+                   r.items_processed, r.items_succeeded, r.items_failed,
+                   r.attempt_number, r.next_retry_at, r.error_message, r.stack_trace, r.error_type,
+                   r.input_json, r.output_json, r.metadata_json
+            FROM {_runs} r
+            INNER JOIN {_batchJobs} bj ON r.id = bj.run_id
+            WHERE bj.batch_id = @batchId
+            ORDER BY bj.order_num
+            """, conn);
+
+        cmd.Parameters.AddWithValue("batchId", batchId);
+
+        return await ReadRunsAsync(cmd, ct);
+    }
+
+    public async Task AddBatchContinuationAsync(BatchContinuation continuation, CancellationToken ct = default)
+    {
+        await using var conn = CreateConnection();
+        await conn.OpenAsync(ct);
+
+        await using var cmd = new NpgsqlCommand($"""
+            INSERT INTO {_batchContinuations} (
+                id, batch_id, trigger_type, job_type_id, input_json, status, continuation_run_id, created_at
+            ) VALUES (
+                @id, @batchId, @triggerType, @jobTypeId, @inputJson, @status, @continuationRunId, @createdAt
+            )
+            """, conn);
+
+        cmd.Parameters.AddWithValue("id", continuation.Id);
+        cmd.Parameters.AddWithValue("batchId", continuation.BatchId);
+        cmd.Parameters.AddWithValue("triggerType", continuation.TriggerType);
+        cmd.Parameters.AddWithValue("jobTypeId", continuation.JobTypeId);
+        cmd.Parameters.AddWithValue("inputJson", (object?)continuation.InputJson ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("status", (int)continuation.Status);
+        cmd.Parameters.AddWithValue("continuationRunId", (object?)continuation.ContinuationRunId ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("createdAt", continuation.CreatedAt);
+
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    public async Task<IReadOnlyList<BatchContinuation>> GetBatchContinuationsAsync(Guid batchId, CancellationToken ct = default)
+    {
+        await using var conn = CreateConnection();
+        await conn.OpenAsync(ct);
+
+        await using var cmd = new NpgsqlCommand($"""
+            SELECT id, batch_id, trigger_type, job_type_id, input_json, status, continuation_run_id, created_at
+            FROM {_batchContinuations}
+            WHERE batch_id = @batchId
+            ORDER BY created_at
+            """, conn);
+
+        cmd.Parameters.AddWithValue("batchId", batchId);
+
+        var continuations = new List<BatchContinuation>();
+        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+        {
+            continuations.Add(MapBatchContinuation(reader));
+        }
+        return continuations;
+    }
+
+    public async Task UpdateBatchContinuationAsync(BatchContinuation continuation, CancellationToken ct = default)
+    {
+        await using var conn = CreateConnection();
+        await conn.OpenAsync(ct);
+
+        await using var cmd = new NpgsqlCommand($"""
+            UPDATE {_batchContinuations} SET
+                status = @status,
+                continuation_run_id = @continuationRunId
+            WHERE id = @id
+            """, conn);
+
+        cmd.Parameters.AddWithValue("id", continuation.Id);
+        cmd.Parameters.AddWithValue("status", (int)continuation.Status);
+        cmd.Parameters.AddWithValue("continuationRunId", (object?)continuation.ContinuationRunId ?? DBNull.Value);
+
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
     // Maintenance
 
     public async Task<int> CleanupOldRunsAsync(TimeSpan retention, CancellationToken ct = default)
@@ -1015,6 +1236,61 @@ public class PostgreSqlJobStorage : IJobStorage
         };
     }
 
+    private static DeadLetterEntry MapDeadLetterEntry(NpgsqlDataReader reader)
+    {
+        return new DeadLetterEntry
+        {
+            Id = reader.GetGuid(0),
+            OriginalRunId = reader.GetGuid(1),
+            JobTypeId = reader.GetString(2),
+            Queue = reader.GetString(3),
+            InputJson = reader.IsDBNull(4) ? null : reader.GetString(4),
+            ErrorMessage = reader.GetString(5),
+            ErrorType = reader.IsDBNull(6) ? null : reader.GetString(6),
+            StackTrace = reader.IsDBNull(7) ? null : reader.GetString(7),
+            AttemptCount = reader.GetInt32(8),
+            MovedAt = reader.GetDateTime(9),
+            Status = (DeadLetterStatus)reader.GetInt32(10),
+            RequeuedAt = reader.IsDBNull(11) ? null : reader.GetDateTime(11),
+            RequeuedRunId = reader.IsDBNull(12) ? null : reader.GetGuid(12),
+            Notes = reader.IsDBNull(13) ? null : reader.GetString(13)
+        };
+    }
+
+    private static JobBatch MapBatch(NpgsqlDataReader reader)
+    {
+        return new JobBatch
+        {
+            Id = reader.GetGuid(0),
+            Name = reader.GetString(1),
+            ParentBatchId = reader.IsDBNull(2) ? null : reader.GetGuid(2),
+            Status = (BatchStatus)reader.GetInt32(3),
+            TotalJobs = reader.GetInt32(4),
+            CompletedJobs = reader.GetInt32(5),
+            FailedJobs = reader.GetInt32(6),
+            CreatedBy = reader.IsDBNull(7) ? null : reader.GetString(7),
+            CreatedAt = reader.GetDateTime(8),
+            StartedAt = reader.IsDBNull(9) ? null : reader.GetDateTime(9),
+            CompletedAt = reader.IsDBNull(10) ? null : reader.GetDateTime(10),
+            ExpiresAt = reader.IsDBNull(11) ? null : reader.GetDateTime(11)
+        };
+    }
+
+    private static BatchContinuation MapBatchContinuation(NpgsqlDataReader reader)
+    {
+        return new BatchContinuation
+        {
+            Id = reader.GetGuid(0),
+            BatchId = reader.GetGuid(1),
+            TriggerType = reader.GetString(2),
+            JobTypeId = reader.GetString(3),
+            InputJson = reader.IsDBNull(4) ? null : reader.GetString(4),
+            Status = (ContinuationStatus)reader.GetInt32(5),
+            ContinuationRunId = reader.IsDBNull(6) ? null : reader.GetGuid(6),
+            CreatedAt = reader.GetDateTime(7)
+        };
+    }
+
     private static void AddRunParameters(NpgsqlCommand cmd, JobRun run)
     {
         cmd.Parameters.AddWithValue("id", run.Id);
@@ -1043,6 +1319,24 @@ public class PostgreSqlJobStorage : IJobStorage
         cmd.Parameters.AddWithValue("inputJson", (object?)run.InputJson ?? DBNull.Value);
         cmd.Parameters.AddWithValue("outputJson", (object?)run.OutputJson ?? DBNull.Value);
         cmd.Parameters.AddWithValue("metadataJson", (object?)run.MetadataJson ?? DBNull.Value);
+    }
+
+    private static void AddDeadLetterParameters(NpgsqlCommand cmd, DeadLetterEntry entry)
+    {
+        cmd.Parameters.AddWithValue("id", entry.Id);
+        cmd.Parameters.AddWithValue("originalRunId", entry.OriginalRunId);
+        cmd.Parameters.AddWithValue("jobTypeId", entry.JobTypeId);
+        cmd.Parameters.AddWithValue("queue", entry.Queue);
+        cmd.Parameters.AddWithValue("inputJson", (object?)entry.InputJson ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("errorMessage", entry.ErrorMessage);
+        cmd.Parameters.AddWithValue("errorType", (object?)entry.ErrorType ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("stackTrace", (object?)entry.StackTrace ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("attemptCount", entry.AttemptCount);
+        cmd.Parameters.AddWithValue("movedAt", entry.MovedAt);
+        cmd.Parameters.AddWithValue("status", (int)entry.Status);
+        cmd.Parameters.AddWithValue("requeuedAt", (object?)entry.RequeuedAt ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("requeuedRunId", (object?)entry.RequeuedRunId ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("notes", (object?)entry.Notes ?? DBNull.Value);
     }
 
     private static async Task<IReadOnlyList<JobRun>> ReadRunsAsync(NpgsqlCommand cmd, CancellationToken ct)
@@ -1079,44 +1373,5 @@ public class PostgreSqlJobStorage : IJobStorage
             });
         }
         return heartbeats;
-    }
-
-    private static DeadLetterEntry MapDeadLetterEntry(NpgsqlDataReader reader)
-    {
-        return new DeadLetterEntry
-        {
-            Id = reader.GetGuid(0),
-            OriginalRunId = reader.GetGuid(1),
-            JobTypeId = reader.GetString(2),
-            Queue = reader.GetString(3),
-            InputJson = reader.IsDBNull(4) ? null : reader.GetString(4),
-            ErrorMessage = reader.GetString(5),
-            ErrorType = reader.IsDBNull(6) ? null : reader.GetString(6),
-            StackTrace = reader.IsDBNull(7) ? null : reader.GetString(7),
-            AttemptCount = reader.GetInt32(8),
-            MovedAt = reader.GetDateTime(9),
-            Status = (DeadLetterStatus)reader.GetInt32(10),
-            RequeuedAt = reader.IsDBNull(11) ? null : reader.GetDateTime(11),
-            RequeuedRunId = reader.IsDBNull(12) ? null : reader.GetGuid(12),
-            Notes = reader.IsDBNull(13) ? null : reader.GetString(13)
-        };
-    }
-
-    private static void AddDeadLetterParameters(NpgsqlCommand cmd, DeadLetterEntry entry)
-    {
-        cmd.Parameters.AddWithValue("id", entry.Id);
-        cmd.Parameters.AddWithValue("originalRunId", entry.OriginalRunId);
-        cmd.Parameters.AddWithValue("jobTypeId", entry.JobTypeId);
-        cmd.Parameters.AddWithValue("queue", entry.Queue);
-        cmd.Parameters.AddWithValue("inputJson", (object?)entry.InputJson ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("errorMessage", entry.ErrorMessage);
-        cmd.Parameters.AddWithValue("errorType", (object?)entry.ErrorType ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("stackTrace", (object?)entry.StackTrace ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("attemptCount", entry.AttemptCount);
-        cmd.Parameters.AddWithValue("movedAt", entry.MovedAt);
-        cmd.Parameters.AddWithValue("status", (int)entry.Status);
-        cmd.Parameters.AddWithValue("requeuedAt", (object?)entry.RequeuedAt ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("requeuedRunId", (object?)entry.RequeuedRunId ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("notes", (object?)entry.Notes ?? DBNull.Value);
     }
 }

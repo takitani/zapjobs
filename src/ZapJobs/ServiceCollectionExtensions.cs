@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using ZapJobs.Batches;
 using ZapJobs.Core;
 using ZapJobs.DeadLetter;
 using ZapJobs.Execution;
@@ -42,6 +43,13 @@ public static class ServiceCollectionExtensions
         services.TryAddSingleton<IJobExecutor, JobExecutor>();
         services.TryAddSingleton<IDeadLetterManager, DeadLetterManager>();
 
+        // Register batch service
+        services.TryAddSingleton<BatchService>();
+        services.TryAddSingleton<IBatchService>(sp => sp.GetRequiredService<BatchService>());
+
+        // Wire up batch service with executor
+        services.AddSingleton<IBatchExecutorInitializer, BatchExecutorInitializer>();
+
         // Register heartbeat and processor
         services.TryAddSingleton<HeartbeatService>();
         services.AddHostedService(sp => sp.GetRequiredService<HeartbeatService>());
@@ -68,12 +76,49 @@ public static class ServiceCollectionExtensions
         services.TryAddSingleton<IJobTracker, JobTrackerService>();
         services.TryAddSingleton<IJobExecutor, JobExecutor>();
         services.TryAddSingleton<IDeadLetterManager, DeadLetterManager>();
+
+        // Register batch service
+        services.TryAddSingleton<BatchService>();
+        services.TryAddSingleton<IBatchService>(sp => sp.GetRequiredService<BatchService>());
+        services.AddSingleton<IBatchExecutorInitializer, BatchExecutorInitializer>();
+
         services.TryAddSingleton<HeartbeatService>();
         services.AddHostedService(sp => sp.GetRequiredService<HeartbeatService>());
         services.AddHostedService<JobRegistrationHostedService>();
         services.AddHostedService<JobProcessorHostedService>();
 
         return new ZapJobsBuilder(services);
+    }
+}
+
+/// <summary>
+/// Interface for initializing batch-executor integration
+/// </summary>
+internal interface IBatchExecutorInitializer
+{
+    void Initialize();
+}
+
+/// <summary>
+/// Wires up BatchService with JobExecutor
+/// </summary>
+internal class BatchExecutorInitializer : IBatchExecutorInitializer
+{
+    private readonly IJobExecutor _executor;
+    private readonly BatchService _batchService;
+
+    public BatchExecutorInitializer(IJobExecutor executor, BatchService batchService)
+    {
+        _executor = executor;
+        _batchService = batchService;
+    }
+
+    public void Initialize()
+    {
+        if (_executor is JobExecutor jobExecutor)
+        {
+            jobExecutor.SetBatchService(_batchService);
+        }
     }
 }
 

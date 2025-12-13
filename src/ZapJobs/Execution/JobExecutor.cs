@@ -3,6 +3,7 @@ using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using ZapJobs.Batches;
 using ZapJobs.Core;
 using ZapJobs.Tracking;
 
@@ -20,6 +21,7 @@ public class JobExecutor : IJobExecutor
     private readonly ZapJobsOptions _options;
     private readonly ILogger<JobExecutor> _logger;
     private readonly Dictionary<string, Type> _jobTypes = new();
+    private BatchService? _batchService;
 
     public JobExecutor(
         IServiceProvider services,
@@ -35,6 +37,14 @@ public class JobExecutor : IJobExecutor
         _retryHandler = retryHandler;
         _options = options.Value;
         _logger = logger;
+    }
+
+    /// <summary>
+    /// Set the batch service for batch completion tracking
+    /// </summary>
+    internal void SetBatchService(BatchService batchService)
+    {
+        _batchService = batchService;
     }
 
     /// <summary>
@@ -168,6 +178,9 @@ public class JobExecutor : IJobExecutor
 
             // Process continuations after successful completion
             await ProcessContinuationsAsync(run, ct);
+
+            // Check batch completion
+            await CheckBatchCompletionAsync(run, ct);
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
@@ -208,6 +221,9 @@ public class JobExecutor : IJobExecutor
 
         // Process continuations after timeout (treated as failure)
         await ProcessContinuationsAsync(run, default);
+
+        // Check batch completion
+        await CheckBatchCompletionAsync(run, default);
     }
 
     private async Task HandleErrorAsync(
@@ -281,6 +297,9 @@ public class JobExecutor : IJobExecutor
 
             // Process continuations after final failure
             await ProcessContinuationsAsync(run, ct);
+
+            // Check batch completion
+            await CheckBatchCompletionAsync(run, ct);
         }
 
         result.DurationMs = (int)durationMs;
@@ -338,6 +357,21 @@ public class JobExecutor : IJobExecutor
             }
 
             await _storage.UpdateContinuationAsync(continuation, ct);
+        }
+    }
+
+    private async Task CheckBatchCompletionAsync(JobRun run, CancellationToken ct)
+    {
+        if (_batchService == null || !run.BatchId.HasValue)
+            return;
+
+        try
+        {
+            await _batchService.CheckBatchCompletionAsync(run, ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to check batch completion for run {RunId}", run.Id);
         }
     }
 }
