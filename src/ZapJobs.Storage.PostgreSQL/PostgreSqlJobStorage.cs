@@ -55,8 +55,8 @@ public class PostgreSqlJobStorage : IJobStorage
         await using var cmd = new NpgsqlCommand($"""
             SELECT job_type_id, display_name, description, queue, schedule_type, interval_minutes,
                    cron_expression, time_zone_id, is_enabled, max_retries, timeout_seconds,
-                   max_concurrency, last_run_at, next_run_at, last_run_status, config_json,
-                   created_at, updated_at
+                   max_concurrency, prevent_overlapping, last_run_at, next_run_at, last_run_status,
+                   config_json, created_at, updated_at
             FROM {_definitions}
             WHERE job_type_id = @jobTypeId
             """, conn);
@@ -79,8 +79,8 @@ public class PostgreSqlJobStorage : IJobStorage
         await using var cmd = new NpgsqlCommand($"""
             SELECT job_type_id, display_name, description, queue, schedule_type, interval_minutes,
                    cron_expression, time_zone_id, is_enabled, max_retries, timeout_seconds,
-                   max_concurrency, last_run_at, next_run_at, last_run_status, config_json,
-                   created_at, updated_at
+                   max_concurrency, prevent_overlapping, last_run_at, next_run_at, last_run_status,
+                   config_json, created_at, updated_at
             FROM {_definitions}
             ORDER BY display_name
             """, conn);
@@ -103,13 +103,13 @@ public class PostgreSqlJobStorage : IJobStorage
             INSERT INTO {_definitions} (
                 job_type_id, display_name, description, queue, schedule_type, interval_minutes,
                 cron_expression, time_zone_id, is_enabled, max_retries, timeout_seconds,
-                max_concurrency, last_run_at, next_run_at, last_run_status, config_json,
-                created_at, updated_at
+                max_concurrency, prevent_overlapping, last_run_at, next_run_at, last_run_status,
+                config_json, created_at, updated_at
             ) VALUES (
                 @jobTypeId, @displayName, @description, @queue, @scheduleType, @intervalMinutes,
                 @cronExpression, @timeZoneId, @isEnabled, @maxRetries, @timeoutSeconds,
-                @maxConcurrency, @lastRunAt, @nextRunAt, @lastRunStatus, @configJson,
-                @createdAt, @updatedAt
+                @maxConcurrency, @preventOverlapping, @lastRunAt, @nextRunAt, @lastRunStatus,
+                @configJson, @createdAt, @updatedAt
             )
             ON CONFLICT (job_type_id) DO UPDATE SET
                 display_name = @displayName,
@@ -123,6 +123,7 @@ public class PostgreSqlJobStorage : IJobStorage
                 max_retries = @maxRetries,
                 timeout_seconds = @timeoutSeconds,
                 max_concurrency = @maxConcurrency,
+                prevent_overlapping = @preventOverlapping,
                 last_run_at = @lastRunAt,
                 next_run_at = @nextRunAt,
                 last_run_status = @lastRunStatus,
@@ -142,6 +143,7 @@ public class PostgreSqlJobStorage : IJobStorage
         cmd.Parameters.AddWithValue("maxRetries", definition.MaxRetries);
         cmd.Parameters.AddWithValue("timeoutSeconds", definition.TimeoutSeconds);
         cmd.Parameters.AddWithValue("maxConcurrency", definition.MaxConcurrency);
+        cmd.Parameters.AddWithValue("preventOverlapping", definition.PreventOverlapping);
         cmd.Parameters.AddWithValue("lastRunAt", (object?)definition.LastRunAt ?? DBNull.Value);
         cmd.Parameters.AddWithValue("nextRunAt", (object?)definition.NextRunAt ?? DBNull.Value);
         cmd.Parameters.AddWithValue("lastRunStatus", definition.LastRunStatus.HasValue ? (int)definition.LastRunStatus : DBNull.Value);
@@ -317,6 +319,27 @@ public class PostgreSqlJobStorage : IJobStorage
         return await ReadRunsAsync(cmd, ct);
     }
 
+    public async Task<bool> HasActiveRunAsync(string jobTypeId, CancellationToken ct = default)
+    {
+        await using var conn = CreateConnection();
+        await conn.OpenAsync(ct);
+
+        await using var cmd = new NpgsqlCommand($"""
+            SELECT EXISTS (
+                SELECT 1 FROM {_runs}
+                WHERE job_type_id = @jobTypeId
+                AND status IN (@pending, @running)
+            )
+            """, conn);
+
+        cmd.Parameters.AddWithValue("jobTypeId", jobTypeId);
+        cmd.Parameters.AddWithValue("pending", (int)JobRunStatus.Pending);
+        cmd.Parameters.AddWithValue("running", (int)JobRunStatus.Running);
+
+        var result = await cmd.ExecuteScalarAsync(ct);
+        return result is true;
+    }
+
     public async Task UpdateRunAsync(JobRun run, CancellationToken ct = default)
     {
         await using var conn = CreateConnection();
@@ -383,8 +406,8 @@ public class PostgreSqlJobStorage : IJobStorage
         await using var cmd = new NpgsqlCommand($"""
             SELECT job_type_id, display_name, description, queue, schedule_type, interval_minutes,
                    cron_expression, time_zone_id, is_enabled, max_retries, timeout_seconds,
-                   max_concurrency, last_run_at, next_run_at, last_run_status, config_json,
-                   created_at, updated_at
+                   max_concurrency, prevent_overlapping, last_run_at, next_run_at, last_run_status,
+                   config_json, created_at, updated_at
             FROM {_definitions}
             WHERE is_enabled = true AND next_run_at <= @asOf
             ORDER BY next_run_at
@@ -784,12 +807,13 @@ public class PostgreSqlJobStorage : IJobStorage
             MaxRetries = reader.GetInt32(9),
             TimeoutSeconds = reader.GetInt32(10),
             MaxConcurrency = reader.GetInt32(11),
-            LastRunAt = reader.IsDBNull(12) ? null : reader.GetDateTime(12),
-            NextRunAt = reader.IsDBNull(13) ? null : reader.GetDateTime(13),
-            LastRunStatus = reader.IsDBNull(14) ? null : (JobRunStatus)reader.GetInt32(14),
-            ConfigJson = reader.IsDBNull(15) ? null : reader.GetString(15),
-            CreatedAt = reader.GetDateTime(16),
-            UpdatedAt = reader.GetDateTime(17)
+            PreventOverlapping = reader.GetBoolean(12),
+            LastRunAt = reader.IsDBNull(13) ? null : reader.GetDateTime(13),
+            NextRunAt = reader.IsDBNull(14) ? null : reader.GetDateTime(14),
+            LastRunStatus = reader.IsDBNull(15) ? null : (JobRunStatus)reader.GetInt32(15),
+            ConfigJson = reader.IsDBNull(16) ? null : reader.GetString(16),
+            CreatedAt = reader.GetDateTime(17),
+            UpdatedAt = reader.GetDateTime(18)
         };
     }
 

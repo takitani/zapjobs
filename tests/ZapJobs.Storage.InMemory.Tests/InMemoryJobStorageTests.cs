@@ -712,6 +712,119 @@ public class InMemoryJobStorageTests
 
     #endregion
 
+    #region HasActiveRunAsync Tests
+
+    [Fact]
+    public async Task HasActiveRunAsync_WithPendingRun_ReturnsTrue()
+    {
+        // Arrange
+        await _storage.EnqueueAsync(new JobRun { JobTypeId = "test-job", Status = JobRunStatus.Pending, Queue = "default" });
+
+        // Act
+        var result = await _storage.HasActiveRunAsync("test-job");
+
+        // Assert
+        result.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task HasActiveRunAsync_WithRunningRun_ReturnsTrue()
+    {
+        // Arrange
+        await _storage.EnqueueAsync(new JobRun { JobTypeId = "test-job", Status = JobRunStatus.Running, Queue = "default" });
+
+        // Act
+        var result = await _storage.HasActiveRunAsync("test-job");
+
+        // Assert
+        result.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task HasActiveRunAsync_WithCompletedRun_ReturnsFalse()
+    {
+        // Arrange
+        await _storage.EnqueueAsync(new JobRun { JobTypeId = "test-job", Status = JobRunStatus.Completed, Queue = "default" });
+
+        // Act
+        var result = await _storage.HasActiveRunAsync("test-job");
+
+        // Assert
+        result.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task HasActiveRunAsync_WithFailedRun_ReturnsFalse()
+    {
+        // Arrange
+        await _storage.EnqueueAsync(new JobRun { JobTypeId = "test-job", Status = JobRunStatus.Failed, Queue = "default" });
+
+        // Act
+        var result = await _storage.HasActiveRunAsync("test-job");
+
+        // Assert
+        result.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task HasActiveRunAsync_WithCancelledRun_ReturnsFalse()
+    {
+        // Arrange
+        await _storage.EnqueueAsync(new JobRun { JobTypeId = "test-job", Status = JobRunStatus.Cancelled, Queue = "default" });
+
+        // Act
+        var result = await _storage.HasActiveRunAsync("test-job");
+
+        // Assert
+        result.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task HasActiveRunAsync_NoRunsForJobType_ReturnsFalse()
+    {
+        // Arrange
+        await _storage.EnqueueAsync(new JobRun { JobTypeId = "other-job", Status = JobRunStatus.Running, Queue = "default" });
+
+        // Act
+        var result = await _storage.HasActiveRunAsync("test-job");
+
+        // Assert
+        result.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task HasActiveRunAsync_MixedStatuses_ReturnsTrueIfAnyActive()
+    {
+        // Arrange
+        await _storage.EnqueueAsync(new JobRun { JobTypeId = "test-job", Status = JobRunStatus.Completed, Queue = "default" });
+        await _storage.EnqueueAsync(new JobRun { JobTypeId = "test-job", Status = JobRunStatus.Failed, Queue = "default" });
+        await _storage.EnqueueAsync(new JobRun { JobTypeId = "test-job", Status = JobRunStatus.Pending, Queue = "default" });
+
+        // Act
+        var result = await _storage.HasActiveRunAsync("test-job");
+
+        // Assert
+        result.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task HasActiveRunAsync_OnlyInactiveStatuses_ReturnsFalse()
+    {
+        // Arrange
+        await _storage.EnqueueAsync(new JobRun { JobTypeId = "test-job", Status = JobRunStatus.Completed, Queue = "default" });
+        await _storage.EnqueueAsync(new JobRun { JobTypeId = "test-job", Status = JobRunStatus.Failed, Queue = "default" });
+        await _storage.EnqueueAsync(new JobRun { JobTypeId = "test-job", Status = JobRunStatus.Cancelled, Queue = "default" });
+        await _storage.EnqueueAsync(new JobRun { JobTypeId = "test-job", Status = JobRunStatus.AwaitingRetry, Queue = "default" });
+
+        // Act
+        var result = await _storage.HasActiveRunAsync("test-job");
+
+        // Assert
+        result.Should().BeFalse();
+    }
+
+    #endregion
+
     #region Continuation Tests
 
     [Fact]

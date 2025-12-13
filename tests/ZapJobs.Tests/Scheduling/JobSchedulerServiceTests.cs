@@ -590,4 +590,189 @@ public class JobSchedulerServiceTests
         result.Should().NotBe(Guid.Empty);
         result.Should().Be(capturedId);
     }
+
+    // RecurringJobOptions tests
+
+    [Fact]
+    public async Task RecurringAsync_WithIntervalAndOptions_SetsPreventOverlapping()
+    {
+        // Arrange
+        _storage.Setup(s => s.GetJobDefinitionAsync("test-job", It.IsAny<CancellationToken>()))
+            .ReturnsAsync((JobDefinition?)null);
+
+        JobDefinition? capturedDef = null;
+        _storage.Setup(s => s.UpsertDefinitionAsync(It.IsAny<JobDefinition>(), It.IsAny<CancellationToken>()))
+            .Callback<JobDefinition, CancellationToken>((def, _) => capturedDef = def)
+            .Returns(Task.CompletedTask);
+
+        var options = new RecurringJobOptions { PreventOverlapping = true };
+        var interval = TimeSpan.FromHours(1);
+
+        // Act
+        var result = await _scheduler.RecurringAsync("test-job", interval, null, options);
+
+        // Assert
+        result.Should().Be("test-job");
+        capturedDef.Should().NotBeNull();
+        capturedDef!.PreventOverlapping.Should().BeTrue();
+        capturedDef.ScheduleType.Should().Be(ScheduleType.Interval);
+    }
+
+    [Fact]
+    public async Task RecurringAsync_WithIntervalAndOptions_SetsQueue()
+    {
+        // Arrange
+        _storage.Setup(s => s.GetJobDefinitionAsync("test-job", It.IsAny<CancellationToken>()))
+            .ReturnsAsync((JobDefinition?)null);
+
+        JobDefinition? capturedDef = null;
+        _storage.Setup(s => s.UpsertDefinitionAsync(It.IsAny<JobDefinition>(), It.IsAny<CancellationToken>()))
+            .Callback<JobDefinition, CancellationToken>((def, _) => capturedDef = def)
+            .Returns(Task.CompletedTask);
+
+        var options = new RecurringJobOptions { Queue = "critical" };
+
+        // Act
+        await _scheduler.RecurringAsync("test-job", TimeSpan.FromHours(1), null, options);
+
+        // Assert
+        capturedDef.Should().NotBeNull();
+        capturedDef!.Queue.Should().Be("critical");
+    }
+
+    [Fact]
+    public async Task RecurringAsync_WithIntervalAndOptions_SetsMaxRetries()
+    {
+        // Arrange
+        _storage.Setup(s => s.GetJobDefinitionAsync("test-job", It.IsAny<CancellationToken>()))
+            .ReturnsAsync((JobDefinition?)null);
+
+        JobDefinition? capturedDef = null;
+        _storage.Setup(s => s.UpsertDefinitionAsync(It.IsAny<JobDefinition>(), It.IsAny<CancellationToken>()))
+            .Callback<JobDefinition, CancellationToken>((def, _) => capturedDef = def)
+            .Returns(Task.CompletedTask);
+
+        var options = new RecurringJobOptions { MaxRetries = 5 };
+
+        // Act
+        await _scheduler.RecurringAsync("test-job", TimeSpan.FromHours(1), null, options);
+
+        // Assert
+        capturedDef.Should().NotBeNull();
+        capturedDef!.MaxRetries.Should().Be(5);
+    }
+
+    [Fact]
+    public async Task RecurringAsync_WithIntervalAndOptions_SetsTimeout()
+    {
+        // Arrange
+        _storage.Setup(s => s.GetJobDefinitionAsync("test-job", It.IsAny<CancellationToken>()))
+            .ReturnsAsync((JobDefinition?)null);
+
+        JobDefinition? capturedDef = null;
+        _storage.Setup(s => s.UpsertDefinitionAsync(It.IsAny<JobDefinition>(), It.IsAny<CancellationToken>()))
+            .Callback<JobDefinition, CancellationToken>((def, _) => capturedDef = def)
+            .Returns(Task.CompletedTask);
+
+        var options = new RecurringJobOptions { Timeout = TimeSpan.FromMinutes(30) };
+
+        // Act
+        await _scheduler.RecurringAsync("test-job", TimeSpan.FromHours(1), null, options);
+
+        // Assert
+        capturedDef.Should().NotBeNull();
+        capturedDef!.TimeoutSeconds.Should().Be(1800);
+    }
+
+    [Fact]
+    public async Task RecurringAsync_WithCronAndOptions_SetsPreventOverlapping()
+    {
+        // Arrange
+        var cronExpression = "0 8 * * *";
+        _cronScheduler.Setup(c => c.IsValidExpression(cronExpression)).Returns(true);
+        _cronScheduler.Setup(c => c.GetNextOccurrence(cronExpression, It.IsAny<DateTime>(), It.IsAny<TimeZoneInfo?>()))
+            .Returns(DateTime.UtcNow.AddDays(1));
+        _storage.Setup(s => s.GetJobDefinitionAsync("test-job", It.IsAny<CancellationToken>()))
+            .ReturnsAsync((JobDefinition?)null);
+
+        JobDefinition? capturedDef = null;
+        _storage.Setup(s => s.UpsertDefinitionAsync(It.IsAny<JobDefinition>(), It.IsAny<CancellationToken>()))
+            .Callback<JobDefinition, CancellationToken>((def, _) => capturedDef = def)
+            .Returns(Task.CompletedTask);
+
+        var options = new RecurringJobOptions { PreventOverlapping = true };
+
+        // Act
+        var result = await _scheduler.RecurringAsync("test-job", cronExpression, null, options);
+
+        // Assert
+        result.Should().Be("test-job");
+        capturedDef.Should().NotBeNull();
+        capturedDef!.PreventOverlapping.Should().BeTrue();
+        capturedDef.ScheduleType.Should().Be(ScheduleType.Cron);
+        capturedDef.CronExpression.Should().Be(cronExpression);
+    }
+
+    [Fact]
+    public async Task RecurringAsync_WithCronAndOptions_UsesOptionsTimeZone()
+    {
+        // Arrange
+        var cronExpression = "0 8 * * *";
+        var easternTimeZone = TimeZoneInfo.FindSystemTimeZoneById("America/New_York");
+
+        _cronScheduler.Setup(c => c.IsValidExpression(cronExpression)).Returns(true);
+        _cronScheduler.Setup(c => c.GetNextOccurrence(cronExpression, It.IsAny<DateTime>(), easternTimeZone))
+            .Returns(DateTime.UtcNow.AddDays(1));
+        _storage.Setup(s => s.GetJobDefinitionAsync("test-job", It.IsAny<CancellationToken>()))
+            .ReturnsAsync((JobDefinition?)null);
+
+        JobDefinition? capturedDef = null;
+        _storage.Setup(s => s.UpsertDefinitionAsync(It.IsAny<JobDefinition>(), It.IsAny<CancellationToken>()))
+            .Callback<JobDefinition, CancellationToken>((def, _) => capturedDef = def)
+            .Returns(Task.CompletedTask);
+
+        var options = new RecurringJobOptions { TimeZone = easternTimeZone };
+
+        // Act
+        await _scheduler.RecurringAsync("test-job", cronExpression, null, options);
+
+        // Assert
+        capturedDef.Should().NotBeNull();
+        capturedDef!.TimeZoneId.Should().Be("America/New_York");
+    }
+
+    [Fact]
+    public async Task RecurringAsync_WithCronAndOptions_SetsAllOptions()
+    {
+        // Arrange
+        var cronExpression = "0 8 * * *";
+        _cronScheduler.Setup(c => c.IsValidExpression(cronExpression)).Returns(true);
+        _cronScheduler.Setup(c => c.GetNextOccurrence(cronExpression, It.IsAny<DateTime>(), It.IsAny<TimeZoneInfo?>()))
+            .Returns(DateTime.UtcNow.AddDays(1));
+        _storage.Setup(s => s.GetJobDefinitionAsync("test-job", It.IsAny<CancellationToken>()))
+            .ReturnsAsync((JobDefinition?)null);
+
+        JobDefinition? capturedDef = null;
+        _storage.Setup(s => s.UpsertDefinitionAsync(It.IsAny<JobDefinition>(), It.IsAny<CancellationToken>()))
+            .Callback<JobDefinition, CancellationToken>((def, _) => capturedDef = def)
+            .Returns(Task.CompletedTask);
+
+        var options = new RecurringJobOptions
+        {
+            PreventOverlapping = true,
+            Queue = "critical",
+            MaxRetries = 10,
+            Timeout = TimeSpan.FromHours(2)
+        };
+
+        // Act
+        await _scheduler.RecurringAsync("test-job", cronExpression, null, options);
+
+        // Assert
+        capturedDef.Should().NotBeNull();
+        capturedDef!.PreventOverlapping.Should().BeTrue();
+        capturedDef.Queue.Should().Be("critical");
+        capturedDef.MaxRetries.Should().Be(10);
+        capturedDef.TimeoutSeconds.Should().Be(7200);
+    }
 }

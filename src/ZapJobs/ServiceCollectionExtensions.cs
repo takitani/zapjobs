@@ -100,12 +100,43 @@ public class ZapJobsBuilder
     }
 
     /// <summary>
+    /// Register a job type with configuration
+    /// </summary>
+    public ZapJobsBuilder AddJob<TJob>(Action<JobDefinitionBuilder> configure) where TJob : class, IJob
+    {
+        Services.AddTransient<TJob>();
+
+        var builder = new JobDefinitionBuilder();
+        configure(builder);
+
+        // Register job type with executor on startup, including configuration
+        Services.AddSingleton<IJobRegistration>(sp => new JobRegistration<TJob>(builder));
+
+        return this;
+    }
+
+    /// <summary>
     /// Register a job type with a factory
     /// </summary>
     public ZapJobsBuilder AddJob<TJob>(Func<IServiceProvider, TJob> factory) where TJob : class, IJob
     {
         Services.AddTransient(factory);
         Services.AddSingleton<IJobRegistration>(sp => new JobRegistration<TJob>());
+
+        return this;
+    }
+
+    /// <summary>
+    /// Register a job type with a factory and configuration
+    /// </summary>
+    public ZapJobsBuilder AddJob<TJob>(Func<IServiceProvider, TJob> factory, Action<JobDefinitionBuilder> configure) where TJob : class, IJob
+    {
+        Services.AddTransient(factory);
+
+        var builder = new JobDefinitionBuilder();
+        configure(builder);
+
+        Services.AddSingleton<IJobRegistration>(sp => new JobRegistration<TJob>(builder));
 
         return this;
     }
@@ -117,6 +148,7 @@ public class ZapJobsBuilder
 public interface IJobRegistration
 {
     Type JobType { get; }
+    JobDefinitionBuilder? Builder { get; }
 }
 
 /// <summary>
@@ -125,4 +157,10 @@ public interface IJobRegistration
 internal class JobRegistration<TJob> : IJobRegistration where TJob : IJob
 {
     public Type JobType => typeof(TJob);
+    public JobDefinitionBuilder? Builder { get; }
+
+    public JobRegistration(JobDefinitionBuilder? builder = null)
+    {
+        Builder = builder;
+    }
 }

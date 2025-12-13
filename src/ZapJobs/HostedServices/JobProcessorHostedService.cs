@@ -100,6 +100,22 @@ public class JobProcessorHostedService : BackgroundService
 
             try
             {
+                // Check for prevent overlapping
+                if (definition.PreventOverlapping)
+                {
+                    var hasActiveRun = await _storage.HasActiveRunAsync(definition.JobTypeId, ct);
+                    if (hasActiveRun)
+                    {
+                        _logger.LogDebug(
+                            "Skipping job {JobTypeId} due to prevent overlapping - instance already running or pending",
+                            definition.JobTypeId);
+
+                        // Still calculate and update next run time
+                        await UpdateNextRunTimeAsync(definition, ct);
+                        continue;
+                    }
+                }
+
                 // Create a run for this recurring job
                 var run = new JobRun
                 {
@@ -115,30 +131,8 @@ public class JobProcessorHostedService : BackgroundService
 
                 await _storage.EnqueueAsync(run, ct);
 
-                // Calculate next run time
-                DateTime? nextRun = null;
-                if (definition.ScheduleType == ScheduleType.Cron && !string.IsNullOrEmpty(definition.CronExpression))
-                {
-                    var tz = !string.IsNullOrEmpty(definition.TimeZoneId)
-                        ? TimeZoneInfo.FindSystemTimeZoneById(definition.TimeZoneId)
-                        : TimeZoneInfo.Utc;
-
-                    nextRun = _cronScheduler.GetNextOccurrence(
-                        definition.CronExpression,
-                        DateTime.UtcNow,
-                        tz);
-                }
-                else if (definition.ScheduleType == ScheduleType.Interval && definition.IntervalMinutes.HasValue)
-                {
-                    nextRun = DateTime.UtcNow.AddMinutes(definition.IntervalMinutes.Value);
-                }
-
-                await _storage.UpdateNextRunAsync(
-                    definition.JobTypeId,
-                    nextRun,
-                    DateTime.UtcNow,
-                    null,
-                    ct);
+                // Update next run time
+                var nextRun = await UpdateNextRunTimeAsync(definition, ct);
 
                 _logger.LogInformation(
                     "Enqueued recurring job {JobTypeId}, next run at {NextRun}",
@@ -169,6 +163,36 @@ public class JobProcessorHostedService : BackgroundService
 
             _logger.LogDebug("Retry job {RunId} is now pending", run.Id);
         }
+    }
+
+    private async Task<DateTime?> UpdateNextRunTimeAsync(JobDefinition definition, CancellationToken ct)
+    {
+        DateTime? nextRun = null;
+
+        if (definition.ScheduleType == ScheduleType.Cron && !string.IsNullOrEmpty(definition.CronExpression))
+        {
+            var tz = !string.IsNullOrEmpty(definition.TimeZoneId)
+                ? TimeZoneInfo.FindSystemTimeZoneById(definition.TimeZoneId)
+                : TimeZoneInfo.Utc;
+
+            nextRun = _cronScheduler.GetNextOccurrence(
+                definition.CronExpression,
+                DateTime.UtcNow,
+                tz);
+        }
+        else if (definition.ScheduleType == ScheduleType.Interval && definition.IntervalMinutes.HasValue)
+        {
+            nextRun = DateTime.UtcNow.AddMinutes(definition.IntervalMinutes.Value);
+        }
+
+        await _storage.UpdateNextRunAsync(
+            definition.JobTypeId,
+            nextRun,
+            DateTime.UtcNow,
+            null,
+            ct);
+
+        return nextRun;
     }
 
     private async Task RunProcessorAsync(CancellationToken ct)

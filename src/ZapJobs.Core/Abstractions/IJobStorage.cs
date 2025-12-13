@@ -39,6 +39,12 @@ public interface IJobStorage
     /// <summary>Get runs for a job type</summary>
     Task<IReadOnlyList<JobRun>> GetRunsByJobTypeAsync(string jobTypeId, int limit = 100, int offset = 0, CancellationToken ct = default);
 
+    /// <summary>
+    /// Check if there are any running or pending jobs of this type.
+    /// Used to implement prevent overlapping functionality.
+    /// </summary>
+    Task<bool> HasActiveRunAsync(string jobTypeId, CancellationToken ct = default);
+
     /// <summary>Update a run</summary>
     Task UpdateRunAsync(JobRun run, CancellationToken ct = default);
 

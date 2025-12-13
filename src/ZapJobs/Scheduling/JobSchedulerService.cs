@@ -113,6 +113,44 @@ public class JobSchedulerService : IJobScheduler
         return jobTypeId;
     }
 
+    public async Task<string> RecurringAsync(string jobTypeId, TimeSpan interval, object? input, RecurringJobOptions options, CancellationToken ct = default)
+    {
+        var definition = await _storage.GetJobDefinitionAsync(jobTypeId, ct);
+        if (definition == null)
+        {
+            definition = new JobDefinition
+            {
+                JobTypeId = jobTypeId,
+                DisplayName = jobTypeId,
+                ScheduleType = ScheduleType.Interval,
+                IntervalMinutes = (int)interval.TotalMinutes,
+                IsEnabled = true
+            };
+        }
+        else
+        {
+            definition.ScheduleType = ScheduleType.Interval;
+            definition.IntervalMinutes = (int)interval.TotalMinutes;
+            definition.IsEnabled = true;
+        }
+
+        // Apply options
+        definition.PreventOverlapping = options.PreventOverlapping;
+        if (options.Queue != null) definition.Queue = options.Queue;
+        if (options.MaxRetries.HasValue) definition.MaxRetries = options.MaxRetries.Value;
+        if (options.Timeout.HasValue) definition.TimeoutSeconds = (int)options.Timeout.Value.TotalSeconds;
+
+        definition.NextRunAt = DateTime.UtcNow.Add(interval);
+        definition.ConfigJson = input != null ? JsonSerializer.Serialize(input) : null;
+        definition.UpdatedAt = DateTime.UtcNow;
+
+        await _storage.UpsertDefinitionAsync(definition, ct);
+        _logger.LogInformation(
+            "Registered recurring job {JobTypeId} with interval {Interval}, PreventOverlapping={PreventOverlapping}",
+            jobTypeId, interval, options.PreventOverlapping);
+        return jobTypeId;
+    }
+
     public async Task<string> RecurringAsync(string jobTypeId, string cronExpression, object? input = null, TimeZoneInfo? timeZone = null, CancellationToken ct = default)
     {
         if (!_cronScheduler.IsValidExpression(cronExpression))
@@ -147,6 +185,51 @@ public class JobSchedulerService : IJobScheduler
 
         await _storage.UpsertDefinitionAsync(definition, ct);
         _logger.LogInformation("Registered recurring job {JobTypeId} with CRON {Cron}", jobTypeId, cronExpression);
+        return jobTypeId;
+    }
+
+    public async Task<string> RecurringAsync(string jobTypeId, string cronExpression, object? input, RecurringJobOptions options, CancellationToken ct = default)
+    {
+        if (!_cronScheduler.IsValidExpression(cronExpression))
+            throw new ArgumentException($"Invalid CRON expression: {cronExpression}", nameof(cronExpression));
+
+        var tz = options.TimeZone ?? _options.GetDefaultTimeZone();
+
+        var definition = await _storage.GetJobDefinitionAsync(jobTypeId, ct);
+        if (definition == null)
+        {
+            definition = new JobDefinition
+            {
+                JobTypeId = jobTypeId,
+                DisplayName = jobTypeId,
+                ScheduleType = ScheduleType.Cron,
+                CronExpression = cronExpression,
+                TimeZoneId = tz.Id,
+                IsEnabled = true
+            };
+        }
+        else
+        {
+            definition.ScheduleType = ScheduleType.Cron;
+            definition.CronExpression = cronExpression;
+            definition.TimeZoneId = tz.Id;
+            definition.IsEnabled = true;
+        }
+
+        // Apply options
+        definition.PreventOverlapping = options.PreventOverlapping;
+        if (options.Queue != null) definition.Queue = options.Queue;
+        if (options.MaxRetries.HasValue) definition.MaxRetries = options.MaxRetries.Value;
+        if (options.Timeout.HasValue) definition.TimeoutSeconds = (int)options.Timeout.Value.TotalSeconds;
+
+        definition.NextRunAt = _cronScheduler.GetNextOccurrence(cronExpression, DateTime.UtcNow, tz);
+        definition.ConfigJson = input != null ? JsonSerializer.Serialize(input) : null;
+        definition.UpdatedAt = DateTime.UtcNow;
+
+        await _storage.UpsertDefinitionAsync(definition, ct);
+        _logger.LogInformation(
+            "Registered recurring job {JobTypeId} with CRON {Cron}, PreventOverlapping={PreventOverlapping}",
+            jobTypeId, cronExpression, options.PreventOverlapping);
         return jobTypeId;
     }
 

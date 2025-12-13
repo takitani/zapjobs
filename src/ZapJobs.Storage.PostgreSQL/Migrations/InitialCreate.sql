@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS zapjobs.definitions (
     max_retries INTEGER NOT NULL DEFAULT 3,
     timeout_seconds INTEGER NOT NULL DEFAULT 3600,
     max_concurrency INTEGER NOT NULL DEFAULT 1,
+    prevent_overlapping BOOLEAN NOT NULL DEFAULT FALSE,
     last_run_at TIMESTAMP,
     next_run_at TIMESTAMP,
     last_run_status INTEGER,
