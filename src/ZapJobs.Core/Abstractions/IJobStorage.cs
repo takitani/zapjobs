@@ -99,6 +99,9 @@ public interface IJobStorage
 
     /// <summary>Get storage statistics</summary>
     Task<JobStorageStats> GetStatsAsync(CancellationToken ct = default);
+
+    /// <summary>Get count of permanently failed jobs (dead letter queue)</summary>
+    Task<int> GetDeadLetterCountAsync(CancellationToken ct = default);
 }
 
 /// <summary>

@@ -317,6 +317,12 @@ public class InMemoryJobStorage : IJobStorage
         return Task.FromResult(stats);
     }
 
+    public Task<int> GetDeadLetterCountAsync(CancellationToken ct = default)
+    {
+        var count = _runs.Values.Count(r => r.Status == JobRunStatus.Failed);
+        return Task.FromResult(count);
+    }
+
     /// <summary>
     /// Clear all data (useful for testing)
     /// </summary>
