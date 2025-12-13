@@ -165,6 +165,9 @@ public class JobExecutor : IJobExecutor
             _logger.LogInformation(
                 "Job {JobTypeId} run {RunId} completed in {Duration}ms",
                 run.JobTypeId, run.Id, stopwatch.ElapsedMilliseconds);
+
+            // Process continuations after successful completion
+            await ProcessContinuationsAsync(run, ct);
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
@@ -198,6 +201,9 @@ public class JobExecutor : IJobExecutor
 
         _logger.LogWarning("Job {JobTypeId} run {RunId} timed out after {Duration}ms",
             run.JobTypeId, run.Id, durationMs);
+
+        // Process continuations after timeout (treated as failure)
+        await ProcessContinuationsAsync(run, default);
     }
 
     private async Task HandleErrorAsync(
@@ -261,9 +267,67 @@ public class JobExecutor : IJobExecutor
             result.Success = false;
             result.ErrorMessage = ex.Message;
             result.WillRetry = false;
+
+            // Process continuations after final failure
+            await ProcessContinuationsAsync(run, ct);
         }
 
         result.DurationMs = (int)durationMs;
+    }
+
+    private async Task ProcessContinuationsAsync(JobRun parentRun, CancellationToken ct)
+    {
+        var continuations = await _storage.GetContinuationsAsync(parentRun.Id, ct);
+        if (continuations.Count == 0)
+            return;
+
+        foreach (var continuation in continuations.Where(c => c.Status == ContinuationStatus.Pending))
+        {
+            var shouldTrigger = continuation.Condition switch
+            {
+                ContinuationCondition.OnSuccess => parentRun.Status == JobRunStatus.Completed,
+                ContinuationCondition.OnFailure => parentRun.Status == JobRunStatus.Failed,
+                ContinuationCondition.Always => true,
+                _ => false
+            };
+
+            if (shouldTrigger)
+            {
+                // Determine input for continuation
+                var input = continuation.PassParentOutput
+                    ? parentRun.OutputJson
+                    : continuation.InputJson;
+
+                var run = new JobRun
+                {
+                    JobTypeId = continuation.ContinuationJobTypeId,
+                    Status = JobRunStatus.Pending,
+                    TriggerType = JobTriggerType.Continuation,
+                    TriggeredBy = $"continuation:{parentRun.Id}",
+                    Queue = continuation.Queue ?? _options.DefaultQueue,
+                    InputJson = input,
+                    CreatedAt = DateTime.UtcNow
+                };
+
+                var runId = await _storage.EnqueueAsync(run, ct);
+                continuation.ContinuationRunId = runId;
+                continuation.Status = ContinuationStatus.Triggered;
+
+                _logger.LogInformation(
+                    "Triggered continuation {ContinuationId} -> job {JobTypeId} run {RunId}",
+                    continuation.Id, continuation.ContinuationJobTypeId, runId);
+            }
+            else
+            {
+                continuation.Status = ContinuationStatus.Skipped;
+
+                _logger.LogDebug(
+                    "Skipped continuation {ContinuationId} (condition {Condition} not met, parent status {Status})",
+                    continuation.Id, continuation.Condition, parentRun.Status);
+            }
+
+            await _storage.UpdateContinuationAsync(continuation, ct);
+        }
     }
 }
 

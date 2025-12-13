@@ -12,6 +12,7 @@ public class InMemoryJobStorage : IJobStorage
     private readonly ConcurrentDictionary<Guid, JobRun> _runs = new();
     private readonly ConcurrentDictionary<Guid, List<JobLog>> _logs = new();
     private readonly ConcurrentDictionary<string, JobHeartbeat> _heartbeats = new();
+    private readonly ConcurrentDictionary<Guid, JobContinuation> _continuations = new();
     private readonly object _lock = new();
 
     /// <summary>
@@ -231,6 +232,31 @@ public class InMemoryJobStorage : IJobStorage
         return Task.CompletedTask;
     }
 
+    // Continuations
+
+    public Task AddContinuationAsync(JobContinuation continuation, CancellationToken ct = default)
+    {
+        continuation.CreatedAt = DateTime.UtcNow;
+        _continuations[continuation.Id] = continuation;
+        return Task.CompletedTask;
+    }
+
+    public Task<IReadOnlyList<JobContinuation>> GetContinuationsAsync(Guid parentRunId, CancellationToken ct = default)
+    {
+        var continuations = _continuations.Values
+            .Where(c => c.ParentRunId == parentRunId)
+            .OrderBy(c => c.CreatedAt)
+            .ToList();
+
+        return Task.FromResult<IReadOnlyList<JobContinuation>>(continuations);
+    }
+
+    public Task UpdateContinuationAsync(JobContinuation continuation, CancellationToken ct = default)
+    {
+        _continuations[continuation.Id] = continuation;
+        return Task.CompletedTask;
+    }
+
     // Maintenance
 
     public Task<int> CleanupOldRunsAsync(TimeSpan retention, CancellationToken ct = default)
@@ -300,5 +326,6 @@ public class InMemoryJobStorage : IJobStorage
         _runs.Clear();
         _logs.Clear();
         _heartbeats.Clear();
+        _continuations.Clear();
     }
 }

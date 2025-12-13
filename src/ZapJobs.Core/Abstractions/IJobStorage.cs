@@ -78,6 +78,17 @@ public interface IJobStorage
     /// <summary>Remove stale heartbeats</summary>
     Task CleanupStaleHeartbeatsAsync(TimeSpan threshold, CancellationToken ct = default);
 
+    // Continuations
+
+    /// <summary>Add a continuation to a parent run</summary>
+    Task AddContinuationAsync(JobContinuation continuation, CancellationToken ct = default);
+
+    /// <summary>Get all continuations for a parent run</summary>
+    Task<IReadOnlyList<JobContinuation>> GetContinuationsAsync(Guid parentRunId, CancellationToken ct = default);
+
+    /// <summary>Update a continuation</summary>
+    Task UpdateContinuationAsync(JobContinuation continuation, CancellationToken ct = default);
+
     // Maintenance
 
     /// <summary>Cleanup old completed runs</summary>

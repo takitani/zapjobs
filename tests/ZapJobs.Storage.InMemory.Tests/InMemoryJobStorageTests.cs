@@ -711,4 +711,214 @@ public class InMemoryJobStorageTests
     }
 
     #endregion
+
+    #region Continuation Tests
+
+    [Fact]
+    public async Task AddContinuationAsync_StoresContinuation()
+    {
+        // Arrange
+        var parentRunId = Guid.NewGuid();
+        var continuation = new JobContinuation
+        {
+            ParentRunId = parentRunId,
+            ContinuationJobTypeId = "continuation-job",
+            Condition = ContinuationCondition.OnSuccess,
+            InputJson = "{\"test\":\"data\"}",
+            Status = ContinuationStatus.Pending
+        };
+
+        // Act
+        await _storage.AddContinuationAsync(continuation);
+
+        // Assert
+        var result = await _storage.GetContinuationsAsync(parentRunId);
+        result.Should().HaveCount(1);
+        result[0].ContinuationJobTypeId.Should().Be("continuation-job");
+        result[0].Condition.Should().Be(ContinuationCondition.OnSuccess);
+        result[0].InputJson.Should().Be("{\"test\":\"data\"}");
+    }
+
+    [Fact]
+    public async Task AddContinuationAsync_SetsCreatedAt()
+    {
+        // Arrange
+        var continuation = new JobContinuation
+        {
+            ParentRunId = Guid.NewGuid(),
+            ContinuationJobTypeId = "test-job",
+            CreatedAt = default
+        };
+
+        // Act
+        var before = DateTime.UtcNow;
+        await _storage.AddContinuationAsync(continuation);
+        var after = DateTime.UtcNow;
+
+        // Assert
+        continuation.CreatedAt.Should().BeOnOrAfter(before);
+        continuation.CreatedAt.Should().BeOnOrBefore(after);
+    }
+
+    [Fact]
+    public async Task GetContinuationsAsync_ReturnsOnlyForParentRun()
+    {
+        // Arrange
+        var parentRunId1 = Guid.NewGuid();
+        var parentRunId2 = Guid.NewGuid();
+
+        await _storage.AddContinuationAsync(new JobContinuation { ParentRunId = parentRunId1, ContinuationJobTypeId = "job-1" });
+        await _storage.AddContinuationAsync(new JobContinuation { ParentRunId = parentRunId1, ContinuationJobTypeId = "job-2" });
+        await _storage.AddContinuationAsync(new JobContinuation { ParentRunId = parentRunId2, ContinuationJobTypeId = "job-3" });
+
+        // Act
+        var result = await _storage.GetContinuationsAsync(parentRunId1);
+
+        // Assert
+        result.Should().HaveCount(2);
+        result.Should().AllSatisfy(c => c.ParentRunId.Should().Be(parentRunId1));
+    }
+
+    [Fact]
+    public async Task GetContinuationsAsync_OrdersByCreatedAt()
+    {
+        // Arrange
+        var parentRunId = Guid.NewGuid();
+
+        var cont1 = new JobContinuation { ParentRunId = parentRunId, ContinuationJobTypeId = "job-1" };
+        var cont2 = new JobContinuation { ParentRunId = parentRunId, ContinuationJobTypeId = "job-2" };
+        var cont3 = new JobContinuation { ParentRunId = parentRunId, ContinuationJobTypeId = "job-3" };
+
+        await _storage.AddContinuationAsync(cont1);
+        await Task.Delay(10);
+        await _storage.AddContinuationAsync(cont2);
+        await Task.Delay(10);
+        await _storage.AddContinuationAsync(cont3);
+
+        // Act
+        var result = await _storage.GetContinuationsAsync(parentRunId);
+
+        // Assert
+        result.Should().HaveCount(3);
+        result[0].ContinuationJobTypeId.Should().Be("job-1");
+        result[1].ContinuationJobTypeId.Should().Be("job-2");
+        result[2].ContinuationJobTypeId.Should().Be("job-3");
+    }
+
+    [Fact]
+    public async Task GetContinuationsAsync_NoMatches_ReturnsEmptyList()
+    {
+        // Act
+        var result = await _storage.GetContinuationsAsync(Guid.NewGuid());
+
+        // Assert
+        result.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task UpdateContinuationAsync_UpdatesStatus()
+    {
+        // Arrange
+        var parentRunId = Guid.NewGuid();
+        var continuation = new JobContinuation
+        {
+            ParentRunId = parentRunId,
+            ContinuationJobTypeId = "test-job",
+            Status = ContinuationStatus.Pending
+        };
+        await _storage.AddContinuationAsync(continuation);
+
+        // Act
+        continuation.Status = ContinuationStatus.Triggered;
+        continuation.ContinuationRunId = Guid.NewGuid();
+        await _storage.UpdateContinuationAsync(continuation);
+
+        // Assert
+        var result = await _storage.GetContinuationsAsync(parentRunId);
+        result[0].Status.Should().Be(ContinuationStatus.Triggered);
+        result[0].ContinuationRunId.Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task Clear_RemovesContinuations()
+    {
+        // Arrange
+        await _storage.AddContinuationAsync(new JobContinuation
+        {
+            ParentRunId = Guid.NewGuid(),
+            ContinuationJobTypeId = "test-job"
+        });
+
+        // Act
+        _storage.Clear();
+
+        // Assert - should not find any continuations for any parent run
+        var result = await _storage.GetContinuationsAsync(Guid.NewGuid());
+        result.Should().BeEmpty();
+    }
+
+    [Theory]
+    [InlineData(ContinuationCondition.OnSuccess)]
+    [InlineData(ContinuationCondition.OnFailure)]
+    [InlineData(ContinuationCondition.Always)]
+    public async Task AddContinuationAsync_StoresDifferentConditions(ContinuationCondition condition)
+    {
+        // Arrange
+        var parentRunId = Guid.NewGuid();
+        var continuation = new JobContinuation
+        {
+            ParentRunId = parentRunId,
+            ContinuationJobTypeId = "test-job",
+            Condition = condition
+        };
+
+        // Act
+        await _storage.AddContinuationAsync(continuation);
+
+        // Assert
+        var result = await _storage.GetContinuationsAsync(parentRunId);
+        result[0].Condition.Should().Be(condition);
+    }
+
+    [Fact]
+    public async Task AddContinuationAsync_WithPassParentOutput_StoresFlag()
+    {
+        // Arrange
+        var parentRunId = Guid.NewGuid();
+        var continuation = new JobContinuation
+        {
+            ParentRunId = parentRunId,
+            ContinuationJobTypeId = "test-job",
+            PassParentOutput = true
+        };
+
+        // Act
+        await _storage.AddContinuationAsync(continuation);
+
+        // Assert
+        var result = await _storage.GetContinuationsAsync(parentRunId);
+        result[0].PassParentOutput.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task AddContinuationAsync_WithQueue_StoresQueue()
+    {
+        // Arrange
+        var parentRunId = Guid.NewGuid();
+        var continuation = new JobContinuation
+        {
+            ParentRunId = parentRunId,
+            ContinuationJobTypeId = "test-job",
+            Queue = "critical"
+        };
+
+        // Act
+        await _storage.AddContinuationAsync(continuation);
+
+        // Assert
+        var result = await _storage.GetContinuationsAsync(parentRunId);
+        result[0].Queue.Should().Be("critical");
+    }
+
+    #endregion
 }

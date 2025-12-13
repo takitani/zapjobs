@@ -113,9 +113,29 @@ CREATE TABLE IF NOT EXISTS zapjobs.heartbeats (
 -- Index for active workers query
 CREATE INDEX IF NOT EXISTS idx_heartbeats_timestamp ON zapjobs.heartbeats(timestamp DESC);
 
+-- Job Continuations table
+CREATE TABLE IF NOT EXISTS zapjobs.continuations (
+    id UUID PRIMARY KEY,
+    parent_run_id UUID NOT NULL,
+    continuation_job_type_id VARCHAR(255) NOT NULL,
+    condition INTEGER NOT NULL DEFAULT 0,
+    input_json TEXT,
+    pass_parent_output BOOLEAN NOT NULL DEFAULT FALSE,
+    queue VARCHAR(100),
+    status INTEGER NOT NULL DEFAULT 0,
+    continuation_run_id UUID,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+-- Index for finding continuations by parent run
+CREATE INDEX IF NOT EXISTS idx_continuations_parent
+    ON zapjobs.continuations(parent_run_id)
+    WHERE status = 0;
+
 -- Comments
 COMMENT ON SCHEMA zapjobs IS 'ZapJobs background job processing tables';
 COMMENT ON TABLE zapjobs.definitions IS 'Job type configurations and schedules';
 COMMENT ON TABLE zapjobs.runs IS 'Individual job executions';
 COMMENT ON TABLE zapjobs.logs IS 'Execution logs for job runs';
 COMMENT ON TABLE zapjobs.heartbeats IS 'Worker health check heartbeats';
+COMMENT ON TABLE zapjobs.continuations IS 'Job continuation chains';

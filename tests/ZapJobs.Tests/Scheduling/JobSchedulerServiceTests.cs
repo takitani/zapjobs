@@ -448,4 +448,146 @@ public class JobSchedulerServiceTests
         // Assert
         result.Should().BeFalse();
     }
+
+    // Continuation tests
+
+    [Fact]
+    public async Task ContinueWithAsync_CreatesContinuationWithCorrectProperties()
+    {
+        // Arrange
+        var parentRunId = Guid.NewGuid();
+        JobContinuation? capturedContinuation = null;
+
+        _storage.Setup(s => s.AddContinuationAsync(It.IsAny<JobContinuation>(), It.IsAny<CancellationToken>()))
+            .Callback<JobContinuation, CancellationToken>((c, _) => capturedContinuation = c)
+            .Returns(Task.CompletedTask);
+
+        // Act
+        var continuationId = await _scheduler.ContinueWithAsync(
+            parentRunId,
+            "continuation-job",
+            condition: ContinuationCondition.OnSuccess);
+
+        // Assert
+        capturedContinuation.Should().NotBeNull();
+        capturedContinuation!.ParentRunId.Should().Be(parentRunId);
+        capturedContinuation.ContinuationJobTypeId.Should().Be("continuation-job");
+        capturedContinuation.Condition.Should().Be(ContinuationCondition.OnSuccess);
+        capturedContinuation.Status.Should().Be(ContinuationStatus.Pending);
+        capturedContinuation.PassParentOutput.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task ContinueWithAsync_WithInput_SerializesInput()
+    {
+        // Arrange
+        var parentRunId = Guid.NewGuid();
+        JobContinuation? capturedContinuation = null;
+
+        _storage.Setup(s => s.AddContinuationAsync(It.IsAny<JobContinuation>(), It.IsAny<CancellationToken>()))
+            .Callback<JobContinuation, CancellationToken>((c, _) => capturedContinuation = c)
+            .Returns(Task.CompletedTask);
+
+        var input = new { Data = "test-data", Count = 42 };
+
+        // Act
+        await _scheduler.ContinueWithAsync(parentRunId, "continuation-job", input);
+
+        // Assert
+        capturedContinuation.Should().NotBeNull();
+        capturedContinuation!.InputJson.Should().NotBeNullOrEmpty();
+
+        var deserialized = JsonSerializer.Deserialize<JsonElement>(capturedContinuation.InputJson!);
+        deserialized.GetProperty("Data").GetString().Should().Be("test-data");
+        deserialized.GetProperty("Count").GetInt32().Should().Be(42);
+    }
+
+    [Fact]
+    public async Task ContinueWithAsync_WithPassParentOutput_SetsFlag()
+    {
+        // Arrange
+        var parentRunId = Guid.NewGuid();
+        JobContinuation? capturedContinuation = null;
+
+        _storage.Setup(s => s.AddContinuationAsync(It.IsAny<JobContinuation>(), It.IsAny<CancellationToken>()))
+            .Callback<JobContinuation, CancellationToken>((c, _) => capturedContinuation = c)
+            .Returns(Task.CompletedTask);
+
+        // Act
+        await _scheduler.ContinueWithAsync(
+            parentRunId,
+            "continuation-job",
+            passParentOutput: true);
+
+        // Assert
+        capturedContinuation.Should().NotBeNull();
+        capturedContinuation!.PassParentOutput.Should().BeTrue();
+        capturedContinuation.InputJson.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task ContinueWithAsync_WithQueue_SetsQueue()
+    {
+        // Arrange
+        var parentRunId = Guid.NewGuid();
+        JobContinuation? capturedContinuation = null;
+
+        _storage.Setup(s => s.AddContinuationAsync(It.IsAny<JobContinuation>(), It.IsAny<CancellationToken>()))
+            .Callback<JobContinuation, CancellationToken>((c, _) => capturedContinuation = c)
+            .Returns(Task.CompletedTask);
+
+        // Act
+        await _scheduler.ContinueWithAsync(
+            parentRunId,
+            "continuation-job",
+            queue: "critical");
+
+        // Assert
+        capturedContinuation.Should().NotBeNull();
+        capturedContinuation!.Queue.Should().Be("critical");
+    }
+
+    [Theory]
+    [InlineData(ContinuationCondition.OnSuccess)]
+    [InlineData(ContinuationCondition.OnFailure)]
+    [InlineData(ContinuationCondition.Always)]
+    public async Task ContinueWithAsync_WithDifferentConditions_SetsCorrectCondition(ContinuationCondition condition)
+    {
+        // Arrange
+        var parentRunId = Guid.NewGuid();
+        JobContinuation? capturedContinuation = null;
+
+        _storage.Setup(s => s.AddContinuationAsync(It.IsAny<JobContinuation>(), It.IsAny<CancellationToken>()))
+            .Callback<JobContinuation, CancellationToken>((c, _) => capturedContinuation = c)
+            .Returns(Task.CompletedTask);
+
+        // Act
+        await _scheduler.ContinueWithAsync(
+            parentRunId,
+            "continuation-job",
+            condition: condition);
+
+        // Assert
+        capturedContinuation.Should().NotBeNull();
+        capturedContinuation!.Condition.Should().Be(condition);
+    }
+
+    [Fact]
+    public async Task ContinueWithAsync_ReturnsContinuationId()
+    {
+        // Arrange
+        var parentRunId = Guid.NewGuid();
+        Guid capturedId = Guid.Empty;
+
+        _storage.Setup(s => s.AddContinuationAsync(It.IsAny<JobContinuation>(), It.IsAny<CancellationToken>()))
+            .Callback<JobContinuation, CancellationToken>((c, _) => capturedId = c.Id)
+            .Returns(Task.CompletedTask);
+
+        // Act
+        var result = await _scheduler.ContinueWithAsync(parentRunId, "continuation-job");
+
+        // Assert
+        result.Should().NotBe(Guid.Empty);
+        result.Should().Be(capturedId);
+    }
 }

@@ -209,4 +209,45 @@ public class JobSchedulerService : IJobScheduler
         _logger.LogInformation("Manually triggered job {JobTypeId} with run ID {RunId}", jobTypeId, runId);
         return runId;
     }
+
+    public async Task<Guid> ContinueWithAsync(
+        Guid parentRunId,
+        string continuationJobTypeId,
+        object? input = null,
+        ContinuationCondition condition = ContinuationCondition.OnSuccess,
+        bool passParentOutput = false,
+        string? queue = null,
+        CancellationToken ct = default)
+    {
+        var continuation = new JobContinuation
+        {
+            ParentRunId = parentRunId,
+            ContinuationJobTypeId = continuationJobTypeId,
+            Condition = condition,
+            InputJson = input != null ? JsonSerializer.Serialize(input) : null,
+            PassParentOutput = passParentOutput,
+            Queue = queue,
+            Status = ContinuationStatus.Pending,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        await _storage.AddContinuationAsync(continuation, ct);
+        _logger.LogInformation(
+            "Created continuation {ContinuationId} for parent run {ParentRunId} -> {ContinuationJobTypeId} ({Condition})",
+            continuation.Id, parentRunId, continuationJobTypeId, condition);
+
+        return continuation.Id;
+    }
+
+    public Task<Guid> ContinueWithAsync<TJob>(
+        Guid parentRunId,
+        object? input = null,
+        ContinuationCondition condition = ContinuationCondition.OnSuccess,
+        bool passParentOutput = false,
+        string? queue = null,
+        CancellationToken ct = default) where TJob : IJob
+    {
+        var job = Activator.CreateInstance<TJob>();
+        return ContinueWithAsync(parentRunId, job.JobTypeId, input, condition, passParentOutput, queue, ct);
+    }
 }

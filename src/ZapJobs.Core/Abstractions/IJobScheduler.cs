@@ -69,4 +69,41 @@ public interface IJobScheduler
     /// <param name="ct">Cancellation token</param>
     /// <returns>Run ID</returns>
     Task<Guid> TriggerAsync(string jobTypeId, object? input = null, CancellationToken ct = default);
+
+    // Continuations
+
+    /// <summary>Create a continuation that runs when parentRunId completes</summary>
+    /// <param name="parentRunId">Run ID that triggers this continuation</param>
+    /// <param name="continuationJobTypeId">Job type to execute as continuation</param>
+    /// <param name="input">Optional input data for continuation</param>
+    /// <param name="condition">When to trigger (OnSuccess, OnFailure, Always)</param>
+    /// <param name="passParentOutput">If true, pass parent's output as continuation input</param>
+    /// <param name="queue">Optional queue name</param>
+    /// <param name="ct">Cancellation token</param>
+    /// <returns>Continuation ID</returns>
+    Task<Guid> ContinueWithAsync(
+        Guid parentRunId,
+        string continuationJobTypeId,
+        object? input = null,
+        ContinuationCondition condition = ContinuationCondition.OnSuccess,
+        bool passParentOutput = false,
+        string? queue = null,
+        CancellationToken ct = default);
+
+    /// <summary>Create a continuation using generic job type</summary>
+    /// <typeparam name="TJob">Job type to execute as continuation</typeparam>
+    /// <param name="parentRunId">Run ID that triggers this continuation</param>
+    /// <param name="input">Optional input data for continuation</param>
+    /// <param name="condition">When to trigger (OnSuccess, OnFailure, Always)</param>
+    /// <param name="passParentOutput">If true, pass parent's output as continuation input</param>
+    /// <param name="queue">Optional queue name</param>
+    /// <param name="ct">Cancellation token</param>
+    /// <returns>Continuation ID</returns>
+    Task<Guid> ContinueWithAsync<TJob>(
+        Guid parentRunId,
+        object? input = null,
+        ContinuationCondition condition = ContinuationCondition.OnSuccess,
+        bool passParentOutput = false,
+        string? queue = null,
+        CancellationToken ct = default) where TJob : IJob;
 }

@@ -9,6 +9,7 @@
 - **Distributed Workers** - Run multiple worker instances with automatic job acquisition and heartbeat monitoring
 - **Retry with Exponential Backoff** - Configurable retry policies with jitter to prevent thundering herd
 - **Priority Queues** - Route jobs to different queues (critical, default, low)
+- **Job Continuations** - Chain jobs to run after parent completes (on success, failure, or always)
 - **Web Dashboard** - Beautiful, real-time monitoring UI with job management
 - **CLI Tool** - Interactive setup, migrations, and status monitoring
 - **Typed Jobs** - Generic job interfaces with input/output type safety
@@ -317,6 +318,52 @@ public class BatchProcessJob : IJob<BatchInput>
 }
 ```
 
+## Job Continuations
+
+Chain jobs to run after a parent job completes:
+
+```csharp
+// Schedule a job and chain a continuation
+var runId = await scheduler.EnqueueAsync<ProcessDataJob>(data);
+
+// Run NotifyJob when ProcessDataJob completes successfully
+await scheduler.ContinueWithAsync(runId, "notify-job",
+    condition: ContinuationCondition.OnSuccess);
+
+// Run CleanupJob regardless of success/failure
+await scheduler.ContinueWithAsync(runId, "cleanup-job",
+    condition: ContinuationCondition.Always);
+
+// Pass parent output as input to continuation
+await scheduler.ContinueWithAsync(runId, "follow-up-job",
+    passParentOutput: true);
+
+// Run error handler only on failure
+await scheduler.ContinueWithAsync(runId, "error-handler",
+    condition: ContinuationCondition.OnFailure);
+```
+
+### Continuation Conditions
+
+| Condition | Description |
+|-----------|-------------|
+| `OnSuccess` | Run only if parent completes successfully (default) |
+| `OnFailure` | Run only if parent fails permanently |
+| `Always` | Run regardless of parent outcome |
+
+### Continuation Options
+
+```csharp
+await scheduler.ContinueWithAsync(
+    parentRunId: runId,                           // Parent job to wait for
+    continuationJobTypeId: "next-job",            // Job to run as continuation
+    input: new { Custom = "data" },               // Custom input (optional)
+    condition: ContinuationCondition.OnSuccess,   // When to trigger
+    passParentOutput: false,                      // Use parent output as input
+    queue: "critical"                             // Queue for continuation
+);
+```
+
 ## Retry Policies
 
 Configure default retry policy:
@@ -394,6 +441,7 @@ The PostgreSQL storage creates these tables (with configurable prefix):
 - `zapjobs_runs` - Individual job executions
 - `zapjobs_logs` - Execution logs per run
 - `zapjobs_heartbeats` - Worker health monitoring
+- `zapjobs_continuations` - Job continuation chains
 
 ## Requirements
 

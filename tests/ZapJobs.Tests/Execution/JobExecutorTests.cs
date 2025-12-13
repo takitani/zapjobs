@@ -42,6 +42,10 @@ public class JobExecutorTests
         _jobLogger.Setup(l => l.WarningAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<object?>(), It.IsAny<int?>()))
             .Returns(Task.CompletedTask);
 
+        // Default setup for continuations - return empty list
+        _storage.Setup(s => s.GetContinuationsAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<JobContinuation>());
+
         _services = new ServiceCollection();
         _services.AddSingleton(_storage.Object);
         _services.AddSingleton(_loggerFactory.Object);

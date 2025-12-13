@@ -32,7 +32,7 @@ ZapJobs.Core (Abstractions + Entities)
     ├── Abstractions/    → IJob, IJobStorage, IJobScheduler, IJobTracker, IJobLogger
     ├── Configuration/   → ZapJobsOptions, RetryPolicy
     ├── Context/         → JobExecutionContext<T>
-    └── Entities/        → JobDefinition, JobRun, JobLog, JobHeartbeat
+    └── Entities/        → JobDefinition, JobRun, JobLog, JobHeartbeat, JobContinuation
 
 ZapJobs (Runtime)
     ├── Execution/       → JobExecutor, RetryHandler
@@ -125,6 +125,35 @@ public class MyService
 }
 ```
 
+### Job Continuations
+
+Chain jobs to run after a parent completes:
+
+```csharp
+// Schedule a job with a continuation
+var runId = await _scheduler.EnqueueAsync("process-data", data);
+
+// Run on success (default)
+await _scheduler.ContinueWithAsync(runId, "notify-job");
+
+// Run on failure
+await _scheduler.ContinueWithAsync(runId, "error-handler",
+    condition: ContinuationCondition.OnFailure);
+
+// Run always (cleanup)
+await _scheduler.ContinueWithAsync(runId, "cleanup-job",
+    condition: ContinuationCondition.Always);
+
+// Pass parent output as continuation input
+await _scheduler.ContinueWithAsync(runId, "follow-up-job",
+    passParentOutput: true);
+```
+
+**Continuation Conditions:**
+- `OnSuccess` - Run only if parent succeeds (default)
+- `OnFailure` - Run only if parent fails permanently
+- `Always` - Run regardless of outcome
+
 ### Execution Context
 
 The `JobExecutionContext<T>` provides:
@@ -170,6 +199,7 @@ PostgreSQL tables (see `Migrations/InitialCreate.sql`):
 | `zapjobs_runs` | Individual job executions |
 | `zapjobs_logs` | Structured execution logs |
 | `zapjobs_heartbeats` | Worker health monitoring |
+| `zapjobs_continuations` | Job continuation chains |
 
 ## Retry Policy
 
@@ -255,7 +285,7 @@ app.Run();
 
 - [ ] Dashboard UI for monitoring
 - [ ] Redis storage backend
-- [ ] Job dependencies (run after another job completes)
+- [x] Job continuations (run after another job completes)
 - [ ] Rate limiting per job type
 - [ ] Dead letter queue for failed jobs
 - [ ] Metrics export (Prometheus/OpenTelemetry)

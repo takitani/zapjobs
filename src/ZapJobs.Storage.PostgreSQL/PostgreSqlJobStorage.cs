@@ -19,6 +19,7 @@ public class PostgreSqlJobStorage : IJobStorage
     private readonly string _runs;
     private readonly string _logs;
     private readonly string _heartbeats;
+    private readonly string _continuations;
 
     public PostgreSqlJobStorage(string connectionString) : this(new PostgreSqlStorageOptions { ConnectionString = connectionString })
     {
@@ -34,6 +35,7 @@ public class PostgreSqlJobStorage : IJobStorage
         _runs = $"{_schema}.runs";
         _logs = $"{_schema}.logs";
         _heartbeats = $"{_schema}.heartbeats";
+        _continuations = $"{_schema}.continuations";
 
         _jsonOptions = new JsonSerializerOptions
         {
@@ -600,6 +602,80 @@ public class PostgreSqlJobStorage : IJobStorage
         await cmd.ExecuteNonQueryAsync(ct);
     }
 
+    // Continuations
+
+    public async Task AddContinuationAsync(JobContinuation continuation, CancellationToken ct = default)
+    {
+        await using var conn = CreateConnection();
+        await conn.OpenAsync(ct);
+
+        await using var cmd = new NpgsqlCommand($"""
+            INSERT INTO {_continuations} (
+                id, parent_run_id, continuation_job_type_id, condition, input_json,
+                pass_parent_output, queue, status, continuation_run_id, created_at
+            ) VALUES (
+                @id, @parentRunId, @continuationJobTypeId, @condition, @inputJson,
+                @passParentOutput, @queue, @status, @continuationRunId, @createdAt
+            )
+            """, conn);
+
+        cmd.Parameters.AddWithValue("id", continuation.Id);
+        cmd.Parameters.AddWithValue("parentRunId", continuation.ParentRunId);
+        cmd.Parameters.AddWithValue("continuationJobTypeId", continuation.ContinuationJobTypeId);
+        cmd.Parameters.AddWithValue("condition", (int)continuation.Condition);
+        cmd.Parameters.AddWithValue("inputJson", (object?)continuation.InputJson ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("passParentOutput", continuation.PassParentOutput);
+        cmd.Parameters.AddWithValue("queue", (object?)continuation.Queue ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("status", (int)continuation.Status);
+        cmd.Parameters.AddWithValue("continuationRunId", (object?)continuation.ContinuationRunId ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("createdAt", continuation.CreatedAt);
+
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    public async Task<IReadOnlyList<JobContinuation>> GetContinuationsAsync(Guid parentRunId, CancellationToken ct = default)
+    {
+        await using var conn = CreateConnection();
+        await conn.OpenAsync(ct);
+
+        await using var cmd = new NpgsqlCommand($"""
+            SELECT id, parent_run_id, continuation_job_type_id, condition, input_json,
+                   pass_parent_output, queue, status, continuation_run_id, created_at
+            FROM {_continuations}
+            WHERE parent_run_id = @parentRunId
+            ORDER BY created_at
+            """, conn);
+
+        cmd.Parameters.AddWithValue("parentRunId", parentRunId);
+
+        var continuations = new List<JobContinuation>();
+        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+        {
+            continuations.Add(MapContinuation(reader));
+        }
+        return continuations;
+    }
+
+    public async Task UpdateContinuationAsync(JobContinuation continuation, CancellationToken ct = default)
+    {
+        await using var conn = CreateConnection();
+        await conn.OpenAsync(ct);
+
+        await using var cmd = new NpgsqlCommand($"""
+            UPDATE {_continuations} SET
+                status = @status,
+                continuation_run_id = @continuationRunId
+            WHERE id = @id
+            """, conn);
+
+        cmd.Parameters.AddWithValue("id", continuation.Id);
+        cmd.Parameters.AddWithValue("status", (int)continuation.Status);
+        cmd.Parameters.AddWithValue("continuationRunId", (object?)continuation.ContinuationRunId ?? DBNull.Value);
+
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
     // Maintenance
 
     public async Task<int> CleanupOldRunsAsync(TimeSpan retention, CancellationToken ct = default)
@@ -734,6 +810,23 @@ public class PostgreSqlJobStorage : IJobStorage
             InputJson = reader.IsDBNull(23) ? null : reader.GetString(23),
             OutputJson = reader.IsDBNull(24) ? null : reader.GetString(24),
             MetadataJson = reader.IsDBNull(25) ? null : reader.GetString(25)
+        };
+    }
+
+    private static JobContinuation MapContinuation(NpgsqlDataReader reader)
+    {
+        return new JobContinuation
+        {
+            Id = reader.GetGuid(0),
+            ParentRunId = reader.GetGuid(1),
+            ContinuationJobTypeId = reader.GetString(2),
+            Condition = (ContinuationCondition)reader.GetInt32(3),
+            InputJson = reader.IsDBNull(4) ? null : reader.GetString(4),
+            PassParentOutput = reader.GetBoolean(5),
+            Queue = reader.IsDBNull(6) ? null : reader.GetString(6),
+            Status = (ContinuationStatus)reader.GetInt32(7),
+            ContinuationRunId = reader.IsDBNull(8) ? null : reader.GetGuid(8),
+            CreatedAt = reader.GetDateTime(9)
         };
     }
 

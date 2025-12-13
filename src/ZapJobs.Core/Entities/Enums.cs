@@ -78,3 +78,33 @@ public enum JobLogLevel
     Error = 4,
     Critical = 5
 }
+
+/// <summary>
+/// When a continuation should be triggered
+/// </summary>
+public enum ContinuationCondition
+{
+    /// <summary>Only if parent job succeeds</summary>
+    OnSuccess = 0,
+
+    /// <summary>Only if parent job fails</summary>
+    OnFailure = 1,
+
+    /// <summary>Regardless of parent job result</summary>
+    Always = 2
+}
+
+/// <summary>
+/// Status of a job continuation
+/// </summary>
+public enum ContinuationStatus
+{
+    /// <summary>Waiting for parent job to complete</summary>
+    Pending = 0,
+
+    /// <summary>Continuation job has been created and enqueued</summary>
+    Triggered = 1,
+
+    /// <summary>Continuation was skipped (condition not met)</summary>
+    Skipped = 2
+}
