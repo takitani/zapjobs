@@ -523,7 +523,8 @@ public class InMemoryJobStorageTests
         var stale = new JobHeartbeat { WorkerId = "stale", Timestamp = DateTime.UtcNow.AddMinutes(-10) };
 
         await _storage.SendHeartbeatAsync(fresh);
-        await _storage.SendHeartbeatAsync(stale);
+        // Directly add stale heartbeat to bypass timestamp update
+        _storage.Heartbeats["stale"] = stale;
 
         // Act
         var result = await _storage.GetStaleHeartbeatsAsync(TimeSpan.FromMinutes(5));
@@ -541,7 +542,8 @@ public class InMemoryJobStorageTests
         var stale = new JobHeartbeat { WorkerId = "stale", Timestamp = DateTime.UtcNow.AddMinutes(-10) };
 
         await _storage.SendHeartbeatAsync(fresh);
-        await _storage.SendHeartbeatAsync(stale);
+        // Directly add stale heartbeat to bypass timestamp update
+        _storage.Heartbeats["stale"] = stale;
 
         // Act
         await _storage.CleanupStaleHeartbeatsAsync(TimeSpan.FromMinutes(5));

@@ -208,6 +208,19 @@ zapjobs/
 - Job IDs are strings (e.g., "send-email", "process-order")
 - Run IDs are GUIDs
 
+## Version Policy
+
+Always prefer the **latest stable LTS versions** for new projects:
+
+- **.NET**: Use the current LTS version (e.g., .NET 10 LTS)
+- **NuGet packages**: Use latest stable versions, especially `Microsoft.Extensions.*`
+- **Testing frameworks**: xUnit 2.9+, FluentAssertions 8+, Moq 4.20+
+- **Database drivers**: Npgsql 10+ for .NET 10
+
+The project uses:
+- `global.json` to pin SDK version with `rollForward: latestMinor`
+- `.mise.toml` for mise-based SDK management
+
 ## Integration Examples
 
 ### With ZapDo (via git submodule)

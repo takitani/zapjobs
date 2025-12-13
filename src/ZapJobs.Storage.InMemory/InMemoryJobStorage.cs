@@ -14,6 +14,11 @@ public class InMemoryJobStorage : IJobStorage
     private readonly ConcurrentDictionary<string, JobHeartbeat> _heartbeats = new();
     private readonly object _lock = new();
 
+    /// <summary>
+    /// Internal access to heartbeats for testing purposes
+    /// </summary>
+    internal ConcurrentDictionary<string, JobHeartbeat> Heartbeats => _heartbeats;
+
     // Job Definitions
 
     public Task<JobDefinition?> GetJobDefinitionAsync(string jobTypeId, CancellationToken ct = default)
