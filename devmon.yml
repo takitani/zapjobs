@@ -34,3 +34,5 @@ header:
       url: "localhost:5432"
 
 footer: "zapjobs - Background Job Scheduler"
+
+cleanup_command: "dotnet build-server shutdown"
