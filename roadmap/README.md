@@ -1,93 +1,132 @@
-# ZapJobs Roadmap
+# ZapJobs - Roadmap
 
-Este diretorio contém a documentação completa do roadmap do ZapJobs, incluindo o estado atual do projeto, features planejadas e prompts de implementação.
+> Biblioteca de job scheduling database-driven para .NET. 100% open source, sem versao Pro.
 
-## Estrutura
+**Ultima atualizacao:** 2025-12-13
+
+## Status
+
+| Prioridade | Total | Feito | Pendente | Descricao |
+|------------|-------|-------|----------|-----------|
+| P0 | 4 | 0 | 4 | Bloqueadores (Testes, CI/CD, NuGet) |
+| P1 | 9 | 4 | 5 | Alto impacto (Core + Observabilidade) |
+| P2 | 6 | 0 | 6 | Media prioridade (DX + Dashboard) |
+| P3 | 10 | 0 | 10 | Futuro (Storage + Avancado) |
+| **Total** | **29** | **4** | **25** | |
+
+## Features Concluidas
+
+| Feature | Pilar | Versao | Diferencial |
+|---------|-------|--------|-------------|
+| Job Continuations | CORE | 1.0 | Encadeamento de jobs |
+| Batch Jobs | CORE | 1.0 | Grupos atomicos (Hangfire Pro $500/ano) |
+| Dead Letter Queue | CORE | 1.0 | Jobs falhos para revisao |
+| Rate Limiting | CORE | 1.0 | Controle de taxa (Hangfire Pro) |
+
+## Proximos (P0 Pendentes)
+
+| # | Item | Pilar | Esforco | Prompt |
+|---|------|-------|---------|--------|
+| 1 | Unit Tests | QUALITY | A | [01-unit-tests.md](./prompts/01-unit-tests.md) |
+| 2 | Integration Tests | QUALITY | M | [02-integration-tests.md](./prompts/02-integration-tests.md) |
+| 3 | GitHub Actions | QUALITY | M | [04-github-actions.md](./prompts/04-github-actions.md) |
+| 4 | NuGet Packages | ADOPT | M | [03-nuget-packages.md](./prompts/03-nuget-packages.md) |
+
+## P1 Pendentes (Alto Impacto)
+
+| # | Item | Pilar | Esforco | Diferencial |
+|---|------|-------|---------|-------------|
+| 1 | Prevent Overlapping | TRUST | B | Evita jobs duplicados |
+| 2 | Health Checks | TRUST | B | Integracao ASP.NET Core |
+| 3 | OpenTelemetry | OBSERVE | M | **Unico no mercado .NET** |
+| 4 | Prometheus Metrics | OBSERVE | M | Observabilidade nativa |
+| 5 | Webhooks | OBSERVE | M | Integracao externa |
+
+## Estrutura do Roadmap
 
 ```
 roadmap/
-├── README.md                    # Este arquivo
-├── 01-current-state.md          # Estado atual detalhado do projeto
-├── 02-roadmap.md                # Roadmap priorizado com todas as features
-└── prompts/                     # Prompts de implementação
-    ├── README.md                # Índice dos prompts
-    ├── 01-unit-tests.md
-    ├── 02-integration-tests.md
-    ├── 03-nuget-packages.md
-    ├── 04-github-actions.md
-    ├── 05-job-dependencies.md
+├── README.md                  # Este arquivo (resumo)
+├── pillars.md                 # Framework de pilares do projeto
+├── backlog/
+│   ├── P0-critical.md         # Bloqueadores
+│   ├── P1-high.md             # Alto impacto
+│   ├── P2-medium.md           # Media prioridade
+│   └── P3-future.md           # Futuro/Experimentacao
+├── research/
+│   ├── MARKET_ANALYSIS.md     # Analise competitiva
+│   ├── 01-current-state.md    # Estado atual do projeto
+│   └── 02-roadmap.md          # Roadmap detalhado (legado)
+├── prompts/                   # Prompts de implementacao pendentes
+│   ├── README.md
+│   ├── 01-unit-tests.md
+│   └── ...
+├── completed/                 # Docs de features implementadas
+└── archive/                   # Prompts implementados
+    ├── 05-job-continuations.md
     ├── 06-dead-letter-queue.md
-    ├── 07-rate-limiting.md
-    ├── 08-webhooks.md
-    ├── 09-opentelemetry.md
-    ├── 10-prometheus-metrics.md
-    ├── 11-signalr-dashboard.md
-    ├── 12-rest-api.md
-    ├── 13-job-templates.md
-    ├── 14-bulk-operations.md
-    └── 15-multi-tenancy.md
+    ├── 15-batch-jobs.md
+    └── 17-rate-limiting.md
 ```
 
-## Visão Geral
+## Pilares do Projeto
 
-O ZapJobs é um job scheduler database-driven para .NET que já possui:
-- Core sólido com abstrações bem definidas
-- Storage PostgreSQL e InMemory
-- Dashboard web completo
-- CLI interativo
-- Sistema de retry com backoff exponencial
-- Filas priorizadas
-- Heartbeat e monitoramento de workers
+| Pilar | Descricao | Obrigatorio |
+|-------|-----------|-------------|
+| **CORE** | Features principais do scheduler | - |
+| **ADOPT** | Publicacao, documentacao, samples | - |
+| **QUALITY** | Testes, CI/CD, cobertura | 1+ por ciclo |
+| **TRUST** | Seguranca, resiliencia, producao | 1+ por ciclo |
+| **OBSERVE** | Metricas, tracing, monitoring | - |
+| **DX** | Developer Experience, API, tooling | - |
+| **PLATFORM** | Storage backends, integracoes | - |
 
-O roadmap foca em:
-1. **Qualidade** - Testes e CI/CD
-2. **Distribuição** - Publicação NuGet
-3. **Robustez** - Features avançadas de scheduling
-4. **Observabilidade** - Métricas e tracing
-5. **Extensibilidade** - Webhooks, templates, multi-tenancy
+**Regras de balanceamento:**
+- Cada ciclo deve ter itens de 3+ pilares diferentes
+- Cada ciclo deve ter 1+ item de TRUST ou QUALITY
+- Nenhum pilar deve ter mais de 50% dos itens do ciclo
 
-## Prioridades
+## Diferenciais vs Concorrentes
 
-### Alta Prioridade
-- Testes unitários e de integração
-- Publicação NuGet
-- CI/CD com GitHub Actions
-- Job dependencies (chains)
-- Dead letter queue
+### vs Hangfire
+- **100% gratis:** Batches, Rate Limiting, Continuations (Pro = $500/ano)
+- **Typed Jobs:** Input/Output com generics
+- **PostgreSQL-first:** Sem dependencia de SQL Server
 
-### Média Prioridade
-- Rate limiting
-- Webhooks
-- OpenTelemetry
-- Prometheus metrics
-- REST API standalone
+### vs Quartz.NET
+- **Dashboard incluido:** Quartz nao tem
+- **API moderna:** Fluent, async/await nativo
+- **Mais simples:** Menos configuracao
 
-### Baixa Prioridade (Futuro)
-- SignalR real-time dashboard
-- Job templates
-- Bulk operations
-- Multi-tenancy
+### vs TickerQ
+- **Mais features:** Batches, Dead Letter, Rate Limiting
+- **Mais storage:** PostgreSQL + InMemory (+ SQLite, Redis futuro)
+- **100% open source:** Sem versao paga
 
-## Como Usar os Prompts
+## Como Usar
 
-Cada arquivo na pasta `prompts/` contém um prompt detalhado para implementação de uma feature específica. O formato inclui:
+### Ver backlog completo
+```
+/roadmap:list           # Lista todas as prioridades
+/roadmap:list P0        # Apenas items criticos
+```
 
-1. **Objetivo** - O que a feature faz
-2. **Contexto** - Estado atual relevante
-3. **Requisitos** - Lista de requisitos funcionais e técnicos
-4. **Arquivos Envolvidos** - Quais arquivos criar/modificar
-5. **Exemplo de Uso** - Como a feature será usada
-6. **Critérios de Aceitação** - Como validar a implementação
+### Detalhar um item
+```
+/roadmap:item batch-jobs
+```
 
-Para implementar uma feature:
-1. Leia o prompt correspondente
-2. Revise o contexto do projeto em `01-current-state.md`
-3. Implemente seguindo os requisitos
-4. Valide com os critérios de aceitação
+### Gerar prompt de implementacao
+```
+/roadmap:prompts --item unit-tests
+```
 
-## Contribuindo
+## Links
 
-Para sugerir novas features ou melhorias:
-1. Crie uma issue descrevendo a feature
-2. Se aprovada, crie um prompt seguindo o formato existente
-3. Submeta um PR com a implementação
+- [Backlog P0 - Critico](./backlog/P0-critical.md)
+- [Backlog P1 - Alto](./backlog/P1-high.md)
+- [Backlog P2 - Medio](./backlog/P2-medium.md)
+- [Backlog P3 - Futuro](./backlog/P3-future.md)
+- [Analise de Mercado](./research/MARKET_ANALYSIS.md)
+- [Pilares do Projeto](./pillars.md)
+- [Prompts de Implementacao](./prompts/)
