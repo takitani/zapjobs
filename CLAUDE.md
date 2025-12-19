@@ -742,6 +742,76 @@ var summary = await _eventStore.GetSummaryAsync(runId);
 - **Correlation/Causation** - Full distributed tracing support
 - **Configurable Retention** - Per-category cleanup policies
 
+### Health Checks
+
+ASP.NET Core health checks for monitoring ZapJobs in production. Useful for Kubernetes liveness/readiness probes and load balancer health monitoring.
+
+```csharp
+var builder = WebApplication.CreateBuilder(args);
+
+builder.Services.AddZapJobs()
+    .UsePostgreSqlStorage(connectionString);
+
+// Add all ZapJobs health checks
+builder.Services.AddHealthChecks()
+    .AddZapJobsHealthChecks(opts =>
+    {
+        opts.MinimumWorkers = 2;
+        opts.MaxPendingJobsDegraded = 50;
+        opts.MaxPendingJobsUnhealthy = 500;
+        opts.MaxDeadLetterDegraded = 10;
+        opts.MaxDeadLetterUnhealthy = 100;
+    });
+
+var app = builder.Build();
+
+// Map health endpoints
+app.MapHealthChecks("/health");
+
+// Separate endpoints for Kubernetes
+app.MapHealthChecks("/health/live", new HealthCheckOptions
+{
+    Predicate = check => check.Tags.Contains("storage")
+});
+
+app.MapHealthChecks("/health/ready", new HealthCheckOptions
+{
+    Predicate = check => check.Tags.Contains("zapjobs")
+});
+
+app.Run();
+```
+
+**Health Checks Included:**
+
+| Check | Tags | Description |
+|-------|------|-------------|
+| `zapjobs-storage` | zapjobs, storage, db | Database connectivity |
+| `zapjobs-workers` | zapjobs, workers | Active worker count |
+| `zapjobs-queue` | zapjobs, queue | Pending jobs backlog |
+| `zapjobs-deadletter` | zapjobs, deadletter | Dead letter queue size |
+
+**Health Status:**
+- **Healthy** - All thresholds within normal range
+- **Degraded** - Approaching thresholds (warning)
+- **Unhealthy** - Thresholds exceeded (alert)
+
+**Kubernetes Deployment:**
+```yaml
+livenessProbe:
+  httpGet:
+    path: /health/live
+    port: 8080
+  initialDelaySeconds: 10
+  periodSeconds: 30
+readinessProbe:
+  httpGet:
+    path: /health/ready
+    port: 8080
+  initialDelaySeconds: 5
+  periodSeconds: 10
+```
+
 ## Configuration Options
 
 ```csharp
@@ -874,4 +944,5 @@ app.Run();
 - [x] Checkpoints/Resume (durable state for long-running jobs)
 - [x] Event History/Replay (immutable audit trail with time-travel debugging)
 - [x] Prevent Overlapping (skip execution if previous still running)
+- [x] Health Checks (ASP.NET Core health checks for K8s/monitoring)
 - [ ] Metrics export (Prometheus/OpenTelemetry)
