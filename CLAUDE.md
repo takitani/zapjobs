@@ -342,6 +342,38 @@ Rate limits are checked in order: Global → Queue → Job Type. All applicable 
         maxDelay: TimeSpan.FromMinutes(5)))
 ```
 
+### Prevent Overlapping
+
+Prevent a recurring job from starting a new execution while a previous instance is still running. Useful for long-running jobs where concurrent executions are undesirable.
+
+```csharp
+// Via fluent API at registration
+services
+    .AddZapJobs()
+    .AddJob<LongRunningReportJob>(job => job
+        .WithPreventOverlapping()
+        .WithTimeout(TimeSpan.FromHours(2)))
+    .AddJob<QuickSyncJob>(); // Can overlap (default)
+
+// Via recurring job options
+await scheduler.ScheduleRecurringAsync(
+    "data-sync",
+    "*/5 * * * *",  // Every 5 minutes
+    input: null,
+    options: new RecurringJobOptions { PreventOverlapping = true });
+```
+
+**How it works:**
+- Before creating a new run, the scheduler checks if there's an existing run with status `Pending` or `Running`
+- If found, the new execution is skipped and logged
+- The next scheduled time is still calculated and updated
+- Jobs without `PreventOverlapping` can have multiple concurrent executions
+
+**Use cases:**
+- Database migrations that should never run concurrently
+- Report generation that takes longer than the schedule interval
+- Sync jobs where running multiple instances would cause conflicts
+
 ### Event Broadcasting
 
 Subscribe to job lifecycle events for monitoring, notifications, or custom integrations. Events are dispatched asynchronously (fire-and-forget) and don't block job execution.
@@ -841,4 +873,5 @@ app.Run();
 - [x] Event broadcasting (pub/sub for job lifecycle events)
 - [x] Checkpoints/Resume (durable state for long-running jobs)
 - [x] Event History/Replay (immutable audit trail with time-travel debugging)
+- [x] Prevent Overlapping (skip execution if previous still running)
 - [ ] Metrics export (Prometheus/OpenTelemetry)
