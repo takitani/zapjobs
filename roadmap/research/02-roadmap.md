@@ -98,16 +98,16 @@ Roadmap priorizado baseado em análise de concorrentes e necessidades do projeto
 | Event Broadcasting | Sistema de eventos para extensibilidade | Médio | Médio | ✅ Feito |
 | Checkpoints/Resume | Estado durável para jobs longos | Alto | Alto | ✅ Feito |
 | Event History/Replay | Auditoria e time-travel debugging | Alto | Alto | ✅ Feito |
-| Prevent Overlapping | Opção para evitar execuções simultâneas | Baixo | Médio | |
+| Prevent Overlapping | Opção para evitar execuções simultâneas | Baixo | Médio | ✅ Feito |
 
 ### Fase 2: Observability (Média Prioridade)
 
 #### 2.1 Métricas e Tracing
-| Item | Descrição | Esforço | Impacto |
-|------|-----------|---------|---------|
-| OpenTelemetry | Traces e spans para jobs | Médio | Alto |
-| Prometheus Metrics | Exportar métricas para Prometheus | Médio | Alto |
-| Health Checks | IHealthCheck para ASP.NET Core | Baixo | Médio |
+| Item | Descrição | Esforço | Impacto | Status |
+|------|-----------|---------|---------|--------|
+| OpenTelemetry | Traces e spans para jobs | Médio | Alto | ✅ Feito |
+| Prometheus Metrics | Exportar métricas para Prometheus | Médio | Alto | ✅ Feito (via OpenTelemetry) |
+| Health Checks | IHealthCheck para ASP.NET Core | Baixo | Médio | ✅ Feito |
 
 #### 2.2 Webhooks e Notificações
 | Item | Descrição | Esforço | Impacto |

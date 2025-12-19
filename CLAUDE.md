@@ -812,6 +812,100 @@ readinessProbe:
   periodSeconds: 10
 ```
 
+### OpenTelemetry
+
+Distributed tracing and metrics for job execution using OpenTelemetry. Each job execution creates a span with semantic convention tags, and metrics track execution counts, durations, and failures.
+
+**Installation:**
+```bash
+dotnet add package ZapJobs.OpenTelemetry
+```
+
+**Setup:**
+```csharp
+var builder = WebApplication.CreateBuilder(args);
+
+// Add ZapJobs with OpenTelemetry instrumentation
+builder.Services.AddZapJobs()
+    .AddJob<MyJob>()
+    .AddOpenTelemetry(opts =>
+    {
+        opts.RecordException = true;
+        opts.Filter = run => run.JobTypeId != "health-check";
+        opts.Enrich = (activity, run) =>
+        {
+            activity.SetTag("tenant.id", run.Queue.Split('-')[0]);
+        };
+    });
+
+// Configure OpenTelemetry exporters
+builder.Services.AddOpenTelemetry()
+    .WithTracing(tracing => tracing
+        .AddAspNetCoreInstrumentation()
+        .AddZapJobsInstrumentation()
+        .AddOtlpExporter())
+    .WithMetrics(metrics => metrics
+        .AddZapJobsInstrumentation()
+        .AddPrometheusExporter());
+
+var app = builder.Build();
+app.Run();
+```
+
+**Span Tags:**
+
+| Tag | Description |
+|-----|-------------|
+| `zapjobs.job.type_id` | Job type identifier |
+| `zapjobs.job.run_id` | Unique run ID |
+| `zapjobs.job.queue` | Job queue name |
+| `zapjobs.job.trigger_type` | How the job was triggered |
+| `zapjobs.job.attempt` | Current attempt number |
+| `zapjobs.job.status` | Final status (completed/failed) |
+| `zapjobs.job.duration_ms` | Execution duration |
+| `zapjobs.batch.id` | Batch ID if part of a batch |
+| `zapjobs.job.parent_run_id` | Parent run ID for continuations |
+
+**Metrics:**
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `zapjobs.jobs.processed` | Counter | Total jobs processed |
+| `zapjobs.jobs.succeeded` | Counter | Jobs completed successfully |
+| `zapjobs.jobs.failed` | Counter | Jobs failed permanently |
+| `zapjobs.jobs.retried` | Counter | Job retry attempts |
+| `zapjobs.jobs.duration` | Histogram | Execution duration (ms) |
+| `zapjobs.jobs.running` | UpDownCounter | Currently running jobs |
+| `zapjobs.jobs.scheduled` | Counter | Jobs scheduled/enqueued |
+| `zapjobs.jobs.dead_lettered` | Counter | Jobs moved to dead letter queue |
+
+All metrics include `job.type_id` and `queue` tags.
+
+**Instrumentation Options:**
+```csharp
+public class ZapJobsInstrumentationOptions
+{
+    // Record exception details in span (default: true)
+    bool RecordException { get; set; }
+
+    // Enrich span with custom tags
+    Action<Activity, JobRun>? Enrich { get; set; }
+
+    // Filter which jobs to trace (return false to skip)
+    Func<JobRun, bool>? Filter { get; set; }
+
+    // Record job input/output in span (default: false for security)
+    bool RecordInput { get; set; }
+    bool RecordOutput { get; set; }
+
+    // Max length of input/output to record (default: 1000)
+    int MaxPayloadLength { get; set; }
+}
+```
+
+**Context Propagation:**
+Trace context automatically propagates through job continuations, so parent and child jobs appear in the same distributed trace.
+
 ## Configuration Options
 
 ```csharp
@@ -873,7 +967,9 @@ zapjobs/
 │   ├── ZapJobs.Core/              # Abstractions (no deps)
 │   ├── ZapJobs/                   # Runtime implementation
 │   ├── ZapJobs.Storage.InMemory/  # Dev/test storage
-│   └── ZapJobs.Storage.PostgreSQL/# Production storage
+│   ├── ZapJobs.Storage.PostgreSQL/# Production storage
+│   ├── ZapJobs.AspNetCore/        # ASP.NET Core integration (dashboard, health checks)
+│   └── ZapJobs.OpenTelemetry/     # OpenTelemetry instrumentation
 ├── tests/
 │   ├── ZapJobs.Tests/             # Core and runtime unit tests
 │   └── ZapJobs.Storage.InMemory.Tests/ # Storage unit tests
@@ -945,4 +1041,4 @@ app.Run();
 - [x] Event History/Replay (immutable audit trail with time-travel debugging)
 - [x] Prevent Overlapping (skip execution if previous still running)
 - [x] Health Checks (ASP.NET Core health checks for K8s/monitoring)
-- [ ] Metrics export (Prometheus/OpenTelemetry)
+- [x] OpenTelemetry (distributed tracing and metrics via OpenTelemetry)
