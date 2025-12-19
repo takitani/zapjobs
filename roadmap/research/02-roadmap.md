@@ -125,10 +125,10 @@ Roadmap priorizado baseado em análise de concorrentes e necessidades do projeto
 | Job Management UI | Criar/editar jobs pelo dashboard | Médio | Médio |
 
 #### 3.2 API REST Standalone
-| Item | Descrição | Esforço | Impacto |
-|------|-----------|---------|---------|
-| REST API | API completa para gerenciamento | Médio | Alto |
-| OpenAPI/Swagger | Documentação automática da API | Baixo | Médio |
+| Item | Descrição | Esforço | Impacto | Status |
+|------|-----------|---------|---------|--------|
+| REST API | API completa para gerenciamento | Médio | Alto | ✅ Feito |
+| OpenAPI/Swagger | Documentação automática da API | Baixo | Médio | ✅ Feito |
 
 ### Fase 4: Advanced Features (Baixa Prioridade)
 

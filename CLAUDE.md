@@ -906,6 +906,70 @@ public class ZapJobsInstrumentationOptions
 **Context Propagation:**
 Trace context automatically propagates through job continuations, so parent and child jobs appear in the same distributed trace.
 
+### REST API
+
+Complete REST API for managing jobs, runs, workers, dead letter queue, and statistics. Includes built-in Swagger/OpenAPI documentation.
+
+**Setup:**
+```csharp
+var builder = WebApplication.CreateBuilder(args);
+
+builder.Services.AddZapJobs()
+    .UsePostgreSqlStorage(connectionString);
+
+// Add REST API with Swagger
+builder.Services.AddZapJobsApi(options =>
+{
+    options.EnableSwagger = true;              // Enable Swagger UI (default: true)
+    options.RequireAuthentication = true;      // Require API key (default: true)
+    options.ApiKeys = ["my-secret-key"];       // Valid API keys
+    options.ApiKeyHeaderName = "X-Api-Key";    // Header name (default)
+});
+
+var app = builder.Build();
+
+app.UseZapJobsApi();  // Maps controllers and Swagger
+
+app.Run();
+```
+
+**Endpoints:**
+
+| Controller | Endpoints | Description |
+|------------|-----------|-------------|
+| `/api/v1/jobs` | GET, POST, PUT, DELETE | Job definitions, trigger, schedule |
+| `/api/v1/runs` | GET, DELETE | Job runs, cancel, retry |
+| `/api/v1/workers` | GET | Active workers |
+| `/api/v1/deadletter` | GET, POST | Dead letter queue, requeue, discard |
+| `/api/v1/stats` | GET | Queue statistics, metrics |
+| `/api/v1/webhooks` | GET, POST, PUT, DELETE | Webhook management |
+
+**Swagger UI:** Available at `/swagger` when enabled.
+
+**Authentication:**
+```bash
+# Using API key
+curl -H "X-Api-Key: my-secret-key" http://localhost:5000/api/v1/jobs
+
+# Trigger a job
+curl -X POST -H "X-Api-Key: my-secret-key" \
+  -H "Content-Type: application/json" \
+  -d '{"input": {"email": "test@example.com"}}' \
+  http://localhost:5000/api/v1/jobs/send-email/trigger
+```
+
+**Configuration via appsettings.json:**
+```json
+{
+  "ZapJobsApi": {
+    "EnableSwagger": true,
+    "RequireAuthentication": true,
+    "ApiKeys": ["key1", "key2"],
+    "ApiKeyHeaderName": "X-Api-Key"
+  }
+}
+```
+
 ## Configuration Options
 
 ```csharp
@@ -1042,3 +1106,5 @@ app.Run();
 - [x] Prevent Overlapping (skip execution if previous still running)
 - [x] Health Checks (ASP.NET Core health checks for K8s/monitoring)
 - [x] OpenTelemetry (distributed tracing and metrics via OpenTelemetry)
+- [x] REST API (complete management API with 6 controllers)
+- [x] OpenAPI/Swagger (auto-generated API documentation)
