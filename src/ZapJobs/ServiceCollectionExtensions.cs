@@ -1,8 +1,12 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using ZapJobs.Batches;
+using ZapJobs.Checkpoints;
 using ZapJobs.Core;
+using ZapJobs.Core.Checkpoints;
+using ZapJobs.Core.Events;
 using ZapJobs.DeadLetter;
+using ZapJobs.Events;
 using ZapJobs.Execution;
 using ZapJobs.HostedServices;
 using ZapJobs.RateLimiting;
@@ -54,6 +58,16 @@ public static class ServiceCollectionExtensions
         // Register rate limiter
         services.TryAddSingleton<IRateLimiter, SlidingWindowRateLimiter>();
 
+        // Register checkpoint services
+        services.Configure<CheckpointOptions>(_ => { });
+        services.TryAddSingleton<ICheckpointStore, CheckpointService>();
+        services.AddHostedService<CheckpointCleanupService>();
+
+        // Register event dispatcher and background service
+        services.TryAddSingleton<JobEventDispatcher>();
+        services.TryAddSingleton<IJobEventDispatcher>(sp => sp.GetRequiredService<JobEventDispatcher>());
+        services.AddHostedService<JobEventBackgroundService>();
+
         // Register heartbeat and processor
         services.TryAddSingleton<HeartbeatService>();
         services.AddHostedService(sp => sp.GetRequiredService<HeartbeatService>());
@@ -89,6 +103,16 @@ public static class ServiceCollectionExtensions
 
         // Register rate limiter
         services.TryAddSingleton<IRateLimiter, SlidingWindowRateLimiter>();
+
+        // Register checkpoint services
+        services.Configure<CheckpointOptions>(configuration.GetSection("ZapJobs:Checkpoints"));
+        services.TryAddSingleton<ICheckpointStore, CheckpointService>();
+        services.AddHostedService<CheckpointCleanupService>();
+
+        // Register event dispatcher and background service
+        services.TryAddSingleton<JobEventDispatcher>();
+        services.TryAddSingleton<IJobEventDispatcher>(sp => sp.GetRequiredService<JobEventDispatcher>());
+        services.AddHostedService<JobEventBackgroundService>();
 
         services.TryAddSingleton<HeartbeatService>();
         services.AddHostedService(sp => sp.GetRequiredService<HeartbeatService>());
@@ -222,6 +246,41 @@ public class ZapJobsBuilder
     public ZapJobsBuilder UseQueueRateLimit(string queue, int limit, TimeSpan window)
     {
         return UseQueueRateLimit(queue, RateLimitPolicy.Create(limit, window));
+    }
+
+    /// <summary>
+    /// Register an event handler for job lifecycle events.
+    /// Handlers are called asynchronously in the background and do not block job execution.
+    /// </summary>
+    /// <typeparam name="THandler">The handler type that implements one or more IJobEventHandler&lt;TEvent&gt; interfaces</typeparam>
+    /// <example>
+    /// <code>
+    /// services.AddZapJobs()
+    ///     .AddEventHandler&lt;SlackNotificationHandler&gt;()
+    ///     .AddEventHandler&lt;MetricsHandler&gt;();
+    /// </code>
+    /// </example>
+    public ZapJobsBuilder AddEventHandler<THandler>() where THandler : class
+    {
+        var handlerType = typeof(THandler);
+        var handlerInterfaces = handlerType.GetInterfaces()
+            .Where(i => i.IsGenericType &&
+                        i.GetGenericTypeDefinition() == typeof(IJobEventHandler<>));
+
+        if (!handlerInterfaces.Any())
+        {
+            throw new ArgumentException(
+                $"Type {handlerType.Name} does not implement any IJobEventHandler<TEvent> interfaces",
+                nameof(THandler));
+        }
+
+        // Register the handler for each event type it handles
+        foreach (var handlerInterface in handlerInterfaces)
+        {
+            Services.AddScoped(handlerInterface, handlerType);
+        }
+
+        return this;
     }
 }
 

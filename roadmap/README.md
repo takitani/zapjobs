@@ -2,7 +2,7 @@
 
 > Biblioteca de job scheduling database-driven para .NET. 100% open source, sem versao Pro.
 
-**Ultima atualizacao:** 2025-12-13
+**Ultima atualizacao:** 2025-12-19
 
 ## Status
 
@@ -11,8 +11,8 @@
 | P0 | 4 | 0 | 4 | Bloqueadores (Testes, CI/CD, NuGet) |
 | P1 | 9 | 4 | 5 | Alto impacto (Core + Observabilidade) |
 | P2 | 6 | 0 | 6 | Media prioridade (DX + Dashboard) |
-| P3 | 10 | 0 | 10 | Futuro (Storage + Avancado) |
-| **Total** | **29** | **4** | **25** | |
+| P3 | 13 | 2 | 11 | Futuro (Storage + Avancado) |
+| **Total** | **32** | **6** | **26** | |
 
 ## Features Concluidas
 
@@ -22,6 +22,8 @@
 | Batch Jobs | CORE | 1.0 | Grupos atomicos (Hangfire Pro $500/ano) |
 | Dead Letter Queue | CORE | 1.0 | Jobs falhos para revisao |
 | Rate Limiting | CORE | 1.0 | Controle de taxa (Hangfire Pro) |
+| Event Broadcasting | CORE | 1.0 | Pub/sub para eventos de job lifecycle |
+| Checkpoints/Resume | CORE | 1.0 | Estado duravel para jobs longos (Temporal-level) |
 
 ## Proximos (P0 Pendentes)
 
@@ -66,7 +68,9 @@ roadmap/
     ├── 05-job-continuations.md
     ├── 06-dead-letter-queue.md
     ├── 15-batch-jobs.md
-    └── 17-rate-limiting.md
+    ├── 17-rate-limiting.md
+    ├── 26-event-broadcasting.md
+    └── 30-checkpoints-resume.md
 ```
 
 ## Pilares do Projeto
@@ -92,6 +96,7 @@ roadmap/
 - **100% gratis:** Batches, Rate Limiting, Continuations (Pro = $500/ano)
 - **Typed Jobs:** Input/Output com generics
 - **PostgreSQL-first:** Sem dependencia de SQL Server
+- **Checkpoints/Resume:** Hangfire nao tem
 
 ### vs Quartz.NET
 - **Dashboard incluido:** Quartz nao tem
@@ -99,9 +104,14 @@ roadmap/
 - **Mais simples:** Menos configuracao
 
 ### vs TickerQ
-- **Mais features:** Batches, Dead Letter, Rate Limiting
+- **Mais features:** Batches, Dead Letter, Rate Limiting, Checkpoints
 - **Mais storage:** PostgreSQL + InMemory (+ SQLite, Redis futuro)
 - **100% open source:** Sem versao paga
+
+### vs Temporal (Inspiracao)
+- **Mais simples:** Checkpoints explicitos vs replay complexo
+- **100% gratis:** Sem licenca enterprise
+- **.NET nativo:** Nao requer SDK separado ou servidor externo
 
 ## Como Usar
 

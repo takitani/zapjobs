@@ -5,6 +5,8 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using ZapJobs.Batches;
 using ZapJobs.Core;
+using ZapJobs.Core.Checkpoints;
+using ZapJobs.Core.Events;
 using ZapJobs.Tracking;
 
 namespace ZapJobs.Execution;
@@ -20,6 +22,8 @@ public class JobExecutor : IJobExecutor
     private readonly RetryHandler _retryHandler;
     private readonly ZapJobsOptions _options;
     private readonly ILogger<JobExecutor> _logger;
+    private readonly IJobEventDispatcher? _eventDispatcher;
+    private readonly ICheckpointStore? _checkpointStore;
     private readonly Dictionary<string, Type> _jobTypes = new();
     private BatchService? _batchService;
 
@@ -29,7 +33,9 @@ public class JobExecutor : IJobExecutor
         IJobLoggerFactory loggerFactory,
         RetryHandler retryHandler,
         IOptions<ZapJobsOptions> options,
-        ILogger<JobExecutor> logger)
+        ILogger<JobExecutor> logger,
+        IJobEventDispatcher? eventDispatcher = null,
+        ICheckpointStore? checkpointStore = null)
     {
         _services = services;
         _storage = storage;
@@ -37,6 +43,8 @@ public class JobExecutor : IJobExecutor
         _retryHandler = retryHandler;
         _options = options.Value;
         _logger = logger;
+        _eventDispatcher = eventDispatcher;
+        _checkpointStore = checkpointStore;
     }
 
     /// <summary>
@@ -123,6 +131,9 @@ public class JobExecutor : IJobExecutor
         using var scope = _services.CreateScope();
         var scopedServices = scope.ServiceProvider;
 
+        // Build resume context if this is a retry
+        var resumeContext = await BuildResumeContextAsync(run, ct);
+
         // Create execution context with scoped provider
         var context = new JobExecutionContext(
             runId: run.Id,
@@ -131,7 +142,10 @@ public class JobExecutor : IJobExecutor
             triggeredBy: run.TriggeredBy,
             services: scopedServices,
             logger: jobLogger,
-            inputDocument: inputDoc);
+            inputDocument: inputDoc,
+            attemptNumber: run.AttemptNumber,
+            resumeContext: resumeContext,
+            checkpointStore: _checkpointStore);
 
         try
         {
@@ -143,6 +157,21 @@ public class JobExecutor : IJobExecutor
             timeoutCts.CancelAfter(timeout);
 
             await jobLogger.InfoAsync($"Starting job execution (attempt {run.AttemptNumber})");
+
+            // Dispatch JobStarted event
+            if (_eventDispatcher != null)
+            {
+                await _eventDispatcher.DispatchAsync(new JobStartedEvent
+                {
+                    RunId = run.Id,
+                    JobTypeId = run.JobTypeId,
+                    Timestamp = DateTimeOffset.UtcNow,
+                    AttemptNumber = run.AttemptNumber,
+                    InputJson = run.InputJson,
+                    Queue = run.Queue
+                });
+            }
+
             await job.ExecuteAsync(context, timeoutCts.Token);
 
             stopwatch.Stop();
@@ -175,6 +204,24 @@ public class JobExecutor : IJobExecutor
             _logger.LogInformation(
                 "Job {JobTypeId} run {RunId} completed in {Duration}ms",
                 run.JobTypeId, run.Id, stopwatch.ElapsedMilliseconds);
+
+            // Dispatch JobCompleted event
+            if (_eventDispatcher != null)
+            {
+                await _eventDispatcher.DispatchAsync(new JobCompletedEvent
+                {
+                    RunId = run.Id,
+                    JobTypeId = run.JobTypeId,
+                    Timestamp = DateTimeOffset.UtcNow,
+                    Duration = stopwatch.Elapsed,
+                    OutputJson = run.OutputJson,
+                    ItemsSucceeded = metrics.ItemsSucceeded,
+                    ItemsFailed = metrics.ItemsFailed,
+                    ItemsProcessed = metrics.ItemsProcessed,
+                    AttemptNumber = run.AttemptNumber,
+                    Queue = run.Queue
+                });
+            }
 
             // Process continuations after successful completion
             await ProcessContinuationsAsync(run, ct);
@@ -218,6 +265,24 @@ public class JobExecutor : IJobExecutor
 
         _logger.LogWarning("Job {JobTypeId} run {RunId} timed out and moved to dead letter queue after {Duration}ms",
             run.JobTypeId, run.Id, durationMs);
+
+        // Dispatch JobFailed event
+        if (_eventDispatcher != null)
+        {
+            await _eventDispatcher.DispatchAsync(new JobFailedEvent
+            {
+                RunId = run.Id,
+                JobTypeId = run.JobTypeId,
+                Timestamp = DateTimeOffset.UtcNow,
+                ErrorMessage = "Job timed out",
+                ErrorType = nameof(OperationCanceledException),
+                AttemptNumber = run.AttemptNumber,
+                WillRetry = false,
+                MovedToDeadLetter = true,
+                Queue = run.Queue,
+                Duration = TimeSpan.FromMilliseconds(durationMs)
+            });
+        }
 
         // Process continuations after timeout (treated as failure)
         await ProcessContinuationsAsync(run, default);
@@ -267,6 +332,24 @@ public class JobExecutor : IJobExecutor
             result.ErrorMessage = ex.Message;
             result.WillRetry = true;
             result.NextRetryAt = run.NextRetryAt;
+
+            // Dispatch JobRetrying event
+            if (_eventDispatcher != null)
+            {
+                await _eventDispatcher.DispatchAsync(new JobRetryingEvent
+                {
+                    RunId = run.Id,
+                    JobTypeId = run.JobTypeId,
+                    Timestamp = DateTimeOffset.UtcNow,
+                    FailedAttempt = run.AttemptNumber,
+                    NextAttempt = run.AttemptNumber + 1,
+                    MaxRetries = retryPolicy.MaxRetries,
+                    RetryAt = new DateTimeOffset(run.NextRetryAt.Value, TimeSpan.Zero),
+                    Delay = delay,
+                    ErrorMessage = ex.Message,
+                    Queue = run.Queue
+                });
+            }
         }
         else
         {
@@ -294,6 +377,25 @@ public class JobExecutor : IJobExecutor
             result.Success = false;
             result.ErrorMessage = ex.Message;
             result.WillRetry = false;
+
+            // Dispatch JobFailed event
+            if (_eventDispatcher != null)
+            {
+                await _eventDispatcher.DispatchAsync(new JobFailedEvent
+                {
+                    RunId = run.Id,
+                    JobTypeId = run.JobTypeId,
+                    Timestamp = DateTimeOffset.UtcNow,
+                    ErrorMessage = ex.Message,
+                    ErrorType = ex.GetType().FullName,
+                    StackTrace = ex.StackTrace,
+                    AttemptNumber = run.AttemptNumber,
+                    WillRetry = false,
+                    MovedToDeadLetter = true,
+                    Queue = run.Queue,
+                    Duration = TimeSpan.FromMilliseconds(durationMs)
+                });
+            }
 
             // Process continuations after final failure
             await ProcessContinuationsAsync(run, ct);
@@ -373,6 +475,61 @@ public class JobExecutor : IJobExecutor
         {
             _logger.LogError(ex, "Failed to check batch completion for run {RunId}", run.Id);
         }
+    }
+
+    private async Task<ResumeContext> BuildResumeContextAsync(JobRun run, CancellationToken ct)
+    {
+        // First attempt - no resumption
+        if (run.AttemptNumber <= 1)
+        {
+            return new ResumeContext
+            {
+                IsResuming = false,
+                Reason = ResumeReason.None
+            };
+        }
+
+        // Check if we have checkpoints from previous attempts
+        if (_checkpointStore == null)
+        {
+            return new ResumeContext
+            {
+                IsResuming = true,
+                PreviousAttempt = run.AttemptNumber - 1,
+                Reason = ResumeReason.RetryAfterFailure
+            };
+        }
+
+        try
+        {
+            // Get the most recent checkpoint to provide context
+            var checkpoints = await _checkpointStore.GetAllAsync(run.Id, ct);
+            var latestCheckpoint = checkpoints.FirstOrDefault();
+
+            if (latestCheckpoint != null)
+            {
+                return new ResumeContext
+                {
+                    IsResuming = true,
+                    PreviousAttempt = run.AttemptNumber - 1,
+                    CheckpointCreatedAt = latestCheckpoint.CreatedAt,
+                    LastCheckpointKey = latestCheckpoint.Key,
+                    Reason = ResumeReason.RetryAfterFailure
+                };
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to get checkpoints for resume context, run {RunId}", run.Id);
+        }
+
+        // No checkpoints found, but still resuming
+        return new ResumeContext
+        {
+            IsResuming = true,
+            PreviousAttempt = run.AttemptNumber - 1,
+            Reason = ResumeReason.RetryAfterFailure
+        };
     }
 }
 

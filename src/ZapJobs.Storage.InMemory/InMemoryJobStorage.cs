@@ -1,5 +1,7 @@
 using System.Collections.Concurrent;
 using ZapJobs.Core;
+using ZapJobs.Core.Checkpoints;
+using ZapJobs.Core.History;
 
 namespace ZapJobs.Storage.InMemory;
 
@@ -18,6 +20,9 @@ public class InMemoryJobStorage : IJobStorage
     private readonly ConcurrentDictionary<Guid, List<BatchJob>> _batchJobs = new();
     private readonly ConcurrentDictionary<Guid, BatchContinuation> _batchContinuations = new();
     private readonly ConcurrentDictionary<string, List<DateTime>> _rateLimitExecutions = new();
+    private readonly ConcurrentDictionary<Guid, Checkpoint> _checkpoints = new();
+    private readonly ConcurrentDictionary<Guid, JobEvent> _events = new();
+    private long _eventSequence = 0;
     private readonly object _lock = new();
 
     /// <summary>
@@ -488,6 +493,328 @@ public class InMemoryJobStorage : IJobStorage
         return Task.FromResult(count);
     }
 
+    // Checkpoints
+
+    public Task SaveCheckpointAsync(Checkpoint checkpoint, CancellationToken ct = default)
+    {
+        _checkpoints[checkpoint.Id] = checkpoint;
+        return Task.CompletedTask;
+    }
+
+    public Task<Checkpoint?> GetLatestCheckpointAsync(Guid runId, string key, CancellationToken ct = default)
+    {
+        var checkpoint = _checkpoints.Values
+            .Where(c => c.RunId == runId && c.Key == key)
+            .OrderByDescending(c => c.SequenceNumber)
+            .FirstOrDefault();
+
+        return Task.FromResult(checkpoint);
+    }
+
+    public Task<IReadOnlyList<Checkpoint>> GetCheckpointsAsync(Guid runId, CancellationToken ct = default)
+    {
+        var checkpoints = _checkpoints.Values
+            .Where(c => c.RunId == runId)
+            .OrderByDescending(c => c.SequenceNumber)
+            .ToList();
+
+        return Task.FromResult<IReadOnlyList<Checkpoint>>(checkpoints);
+    }
+
+    public Task<IReadOnlyList<Checkpoint>> GetCheckpointHistoryAsync(Guid runId, string key, int limit = 10, CancellationToken ct = default)
+    {
+        var checkpoints = _checkpoints.Values
+            .Where(c => c.RunId == runId && c.Key == key)
+            .OrderByDescending(c => c.SequenceNumber)
+            .Take(limit)
+            .ToList();
+
+        return Task.FromResult<IReadOnlyList<Checkpoint>>(checkpoints);
+    }
+
+    public Task<int> GetNextCheckpointSequenceAsync(Guid runId, CancellationToken ct = default)
+    {
+        var maxSequence = _checkpoints.Values
+            .Where(c => c.RunId == runId)
+            .Select(c => c.SequenceNumber)
+            .DefaultIfEmpty(0)
+            .Max();
+
+        return Task.FromResult(maxSequence + 1);
+    }
+
+    public Task<bool> DeleteCheckpointAsync(Guid checkpointId, CancellationToken ct = default)
+    {
+        return Task.FromResult(_checkpoints.TryRemove(checkpointId, out _));
+    }
+
+    public Task<int> DeleteCheckpointsForRunAsync(Guid runId, CancellationToken ct = default)
+    {
+        var toDelete = _checkpoints.Values
+            .Where(c => c.RunId == runId)
+            .Select(c => c.Id)
+            .ToList();
+
+        foreach (var id in toDelete)
+        {
+            _checkpoints.TryRemove(id, out _);
+        }
+
+        return Task.FromResult(toDelete.Count);
+    }
+
+    public Task<int> DeleteCheckpointsByKeyAsync(Guid runId, string key, CancellationToken ct = default)
+    {
+        var toDelete = _checkpoints.Values
+            .Where(c => c.RunId == runId && c.Key == key)
+            .Select(c => c.Id)
+            .ToList();
+
+        foreach (var id in toDelete)
+        {
+            _checkpoints.TryRemove(id, out _);
+        }
+
+        return Task.FromResult(toDelete.Count);
+    }
+
+    public Task<int> DeleteExpiredCheckpointsAsync(CancellationToken ct = default)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var toDelete = _checkpoints.Values
+            .Where(c => c.ExpiresAt.HasValue && c.ExpiresAt <= now)
+            .Select(c => c.Id)
+            .ToList();
+
+        foreach (var id in toDelete)
+        {
+            _checkpoints.TryRemove(id, out _);
+        }
+
+        return Task.FromResult(toDelete.Count);
+    }
+
+    public Task<int> DeleteCheckpointsForCompletedJobsAsync(TimeSpan completedJobAge, CancellationToken ct = default)
+    {
+        var cutoff = DateTime.UtcNow - completedJobAge;
+
+        // Find runs that completed before cutoff
+        var completedRunIds = _runs.Values
+            .Where(r => r.Status == JobRunStatus.Completed || r.Status == JobRunStatus.Failed)
+            .Where(r => r.CompletedAt.HasValue && r.CompletedAt < cutoff)
+            .Select(r => r.Id)
+            .ToHashSet();
+
+        // Delete checkpoints for those runs
+        var toDelete = _checkpoints.Values
+            .Where(c => completedRunIds.Contains(c.RunId))
+            .Select(c => c.Id)
+            .ToList();
+
+        foreach (var id in toDelete)
+        {
+            _checkpoints.TryRemove(id, out _);
+        }
+
+        return Task.FromResult(toDelete.Count);
+    }
+
+    // Events
+
+    public Task AppendEventAsync(JobEvent @event, CancellationToken ct = default)
+    {
+        if (@event.SequenceNumber == 0)
+        {
+            @event.SequenceNumber = Interlocked.Increment(ref _eventSequence);
+        }
+        _events[@event.Id] = @event;
+        return Task.CompletedTask;
+    }
+
+    public Task AppendEventsAsync(IEnumerable<JobEvent> events, CancellationToken ct = default)
+    {
+        foreach (var @event in events)
+        {
+            if (@event.SequenceNumber == 0)
+            {
+                @event.SequenceNumber = Interlocked.Increment(ref _eventSequence);
+            }
+            _events[@event.Id] = @event;
+        }
+        return Task.CompletedTask;
+    }
+
+    public Task<IReadOnlyList<JobEvent>> GetEventsAsync(Guid runId, CancellationToken ct = default)
+    {
+        var events = _events.Values
+            .Where(e => e.RunId == runId)
+            .OrderBy(e => e.SequenceNumber)
+            .ToList();
+
+        return Task.FromResult<IReadOnlyList<JobEvent>>(events);
+    }
+
+    public Task<IReadOnlyList<JobEvent>> GetEventsAsync(
+        Guid runId,
+        string? eventType,
+        string? category,
+        int limit = 1000,
+        int offset = 0,
+        CancellationToken ct = default)
+    {
+        var query = _events.Values.Where(e => e.RunId == runId);
+
+        if (!string.IsNullOrEmpty(eventType))
+            query = query.Where(e => e.EventType == eventType);
+
+        if (!string.IsNullOrEmpty(category))
+            query = query.Where(e => e.Category == category);
+
+        var events = query
+            .OrderBy(e => e.SequenceNumber)
+            .Skip(offset)
+            .Take(limit)
+            .ToList();
+
+        return Task.FromResult<IReadOnlyList<JobEvent>>(events);
+    }
+
+    public Task<IReadOnlyList<JobEvent>> GetEventsAfterSequenceAsync(
+        Guid runId,
+        long afterSequence,
+        int limit = 100,
+        CancellationToken ct = default)
+    {
+        var events = _events.Values
+            .Where(e => e.RunId == runId && e.SequenceNumber > afterSequence)
+            .OrderBy(e => e.SequenceNumber)
+            .Take(limit)
+            .ToList();
+
+        return Task.FromResult<IReadOnlyList<JobEvent>>(events);
+    }
+
+    public Task<JobEvent?> GetEventAsync(Guid eventId, CancellationToken ct = default)
+    {
+        _events.TryGetValue(eventId, out var @event);
+        return Task.FromResult(@event);
+    }
+
+    public Task<JobEvent?> GetLatestEventAsync(Guid runId, string eventType, CancellationToken ct = default)
+    {
+        var @event = _events.Values
+            .Where(e => e.RunId == runId && e.EventType == eventType)
+            .OrderByDescending(e => e.SequenceNumber)
+            .FirstOrDefault();
+
+        return Task.FromResult(@event);
+    }
+
+    public Task<int> GetEventCountAsync(Guid runId, CancellationToken ct = default)
+    {
+        var count = _events.Values.Count(e => e.RunId == runId);
+        return Task.FromResult(count);
+    }
+
+    public Task<long> GetNextEventSequenceAsync(CancellationToken ct = default)
+    {
+        return Task.FromResult(Interlocked.Increment(ref _eventSequence));
+    }
+
+    public Task<IReadOnlyList<JobEvent>> GetEventsByCorrelationIdAsync(string correlationId, CancellationToken ct = default)
+    {
+        var events = _events.Values
+            .Where(e => e.CorrelationId == correlationId)
+            .OrderBy(e => e.SequenceNumber)
+            .ToList();
+
+        return Task.FromResult<IReadOnlyList<JobEvent>>(events);
+    }
+
+    public Task<IReadOnlyList<JobEvent>> GetEventsByWorkflowIdAsync(Guid workflowId, CancellationToken ct = default)
+    {
+        var events = _events.Values
+            .Where(e => e.WorkflowId == workflowId)
+            .OrderBy(e => e.SequenceNumber)
+            .ToList();
+
+        return Task.FromResult<IReadOnlyList<JobEvent>>(events);
+    }
+
+    public Task<IReadOnlyList<JobEvent>> SearchEventsAsync(
+        string query,
+        Guid? runId = null,
+        Guid? workflowId = null,
+        string[]? eventTypes = null,
+        DateTimeOffset? from = null,
+        DateTimeOffset? to = null,
+        int limit = 100,
+        CancellationToken ct = default)
+    {
+        var searchQuery = query.ToLowerInvariant();
+        var eventsQuery = _events.Values.AsEnumerable();
+
+        if (runId.HasValue)
+            eventsQuery = eventsQuery.Where(e => e.RunId == runId.Value);
+
+        if (workflowId.HasValue)
+            eventsQuery = eventsQuery.Where(e => e.WorkflowId == workflowId.Value);
+
+        if (eventTypes != null && eventTypes.Length > 0)
+            eventsQuery = eventsQuery.Where(e => eventTypes.Contains(e.EventType));
+
+        if (from.HasValue)
+            eventsQuery = eventsQuery.Where(e => e.Timestamp >= from.Value);
+
+        if (to.HasValue)
+            eventsQuery = eventsQuery.Where(e => e.Timestamp <= to.Value);
+
+        // Simple text search in payload, tags, and actor
+        eventsQuery = eventsQuery.Where(e =>
+            (e.PayloadJson?.ToLowerInvariant().Contains(searchQuery) ?? false) ||
+            (e.Actor?.ToLowerInvariant().Contains(searchQuery) ?? false) ||
+            (e.Source?.ToLowerInvariant().Contains(searchQuery) ?? false) ||
+            (e.Tags != null && e.Tags.Any(t => t.ToLowerInvariant().Contains(searchQuery))));
+
+        var events = eventsQuery
+            .OrderBy(e => e.Timestamp)
+            .Take(limit)
+            .ToList();
+
+        return Task.FromResult<IReadOnlyList<JobEvent>>(events);
+    }
+
+    public Task<int> DeleteEventsForRunAsync(Guid runId, CancellationToken ct = default)
+    {
+        var toDelete = _events.Values
+            .Where(e => e.RunId == runId)
+            .Select(e => e.Id)
+            .ToList();
+
+        foreach (var id in toDelete)
+        {
+            _events.TryRemove(id, out _);
+        }
+
+        return Task.FromResult(toDelete.Count);
+    }
+
+    public Task<int> DeleteOldEventsAsync(TimeSpan maxAge, CancellationToken ct = default)
+    {
+        var cutoff = DateTimeOffset.UtcNow - maxAge;
+        var toDelete = _events.Values
+            .Where(e => e.Timestamp < cutoff)
+            .Select(e => e.Id)
+            .ToList();
+
+        foreach (var id in toDelete)
+        {
+            _events.TryRemove(id, out _);
+        }
+
+        return Task.FromResult(toDelete.Count);
+    }
+
     // Maintenance
 
     public Task<int> CleanupOldRunsAsync(TimeSpan retention, CancellationToken ct = default)
@@ -564,5 +891,8 @@ public class InMemoryJobStorage : IJobStorage
         _batchJobs.Clear();
         _batchContinuations.Clear();
         _rateLimitExecutions.Clear();
+        _checkpoints.Clear();
+        _events.Clear();
+        _eventSequence = 0;
     }
 }

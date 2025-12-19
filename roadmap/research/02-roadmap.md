@@ -15,8 +15,12 @@ Roadmap priorizado baseado em análise de concorrentes e necessidades do projeto
 | Recurring/CRON | Sim | Sim |
 | Retries automáticos | Sim | Sim |
 | Continuations (chains) | Sim | Sim |
-| Batch jobs (atomico) | Pro ($500/yr) | **Falta** |
-| Nested batches | Pro | **Falta** |
+| Batch jobs (atomico) | Pro ($500/yr) | ✅ Sim (grátis!) |
+| Nested batches | Pro | ✅ Sim (grátis!) |
+| Dead letter queue | Pro | ✅ Sim (grátis!) |
+| Rate limiting | Pro | ✅ Sim (grátis!) |
+| Event broadcasting | Pro | ✅ Sim (grátis!) |
+| Event history | Não | ✅ Sim |
 | SQL Server storage | Sim | PostgreSQL |
 | Redis storage | Sim | **Falta** |
 | Publicação NuGet | Sim | **Falta** |
@@ -61,7 +65,9 @@ Roadmap priorizado baseado em análise de concorrentes e necessidades do projeto
 | Fluent API | Excelente | Bom |
 | Zero config | Sim | Quase |
 | Prevent overlapping | Sim | **Falta** |
-| Event broadcasting | Sim | **Falta** |
+| Event broadcasting | Sim | ✅ Sim |
+| Checkpoints/Resume | Não | ✅ Sim |
+| Event history | Não | ✅ Sim |
 | Persistence | Não | Sim |
 | Dashboard | Não | Sim |
 | DI integration | Nativo | Sim |
@@ -86,8 +92,12 @@ Roadmap priorizado baseado em análise de concorrentes e necessidades do projeto
 | Item | Descrição | Esforço | Impacto | Status |
 |------|-----------|---------|---------|--------|
 | Job Continuations | `ContinueWith` para encadear jobs | Médio | Alto | ✅ Feito |
-| Batch Jobs | Criar grupo de jobs atomicamente | Alto | Alto | |
-| Dead Letter Queue | Jobs que falharam permanentemente | Médio | Alto | |
+| Batch Jobs | Criar grupo de jobs atomicamente | Alto | Alto | ✅ Feito |
+| Dead Letter Queue | Jobs que falharam permanentemente | Médio | Alto | ✅ Feito |
+| Rate Limiting | Limitar execuções por período | Médio | Médio | ✅ Feito |
+| Event Broadcasting | Sistema de eventos para extensibilidade | Médio | Médio | ✅ Feito |
+| Checkpoints/Resume | Estado durável para jobs longos | Alto | Alto | ✅ Feito |
+| Event History/Replay | Auditoria e time-travel debugging | Alto | Alto | ✅ Feito |
 | Prevent Overlapping | Opção para evitar execuções simultâneas | Baixo | Médio | |
 
 ### Fase 2: Observability (Média Prioridade)
@@ -190,6 +200,10 @@ O que já fazemos melhor:
 4. **CLI Completo** - Setup interativo com wizard
 5. **100% Open Source** - Sem versão Pro paga (vs Hangfire)
 6. **Typed Jobs** - Input/Output com generics
+7. **Batch Jobs Grátis** - Hangfire cobra $500/ano
+8. **Event History** - Temporal limita 51,200 eventos; ZapJobs ilimitado
+9. **Checkpoints/Resume** - Jobs longos sobrevivem crashes
+10. **Time-Travel Debugging** - Reconstruir estado em qualquer ponto
 
 ---
 
@@ -208,24 +222,30 @@ O que já fazemos melhor:
 - GitHub Actions CI/CD
 - NuGet packages publicados
 
-### v1.2 - Chaining
+### v1.2 - Chaining ✅
 - ~~Job continuations~~ ✅
+- ~~Dead letter queue~~ ✅
+- ~~Batch jobs~~ ✅
+- ~~Nested batches~~ ✅
 - Prevent overlapping
-- Dead letter queue
 
-### v1.3 - Observability
+### v1.3 - Advanced Features ✅
+- ~~Rate limiting~~ ✅
+- ~~Event broadcasting~~ ✅
+- ~~Checkpoints/Resume~~ ✅
+- ~~Event history/Replay~~ ✅
+
+### v1.4 - Observability
 - OpenTelemetry
 - Prometheus metrics
 - Webhooks
 
 ### v2.0 - Real-time
 - SignalR dashboard
-- Batch jobs
 - REST API standalone
 
 ### v2.1 - Advanced
 - Calendar exclusions
-- Rate limiting
 - Multi-tenancy
 
 ---

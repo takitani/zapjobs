@@ -2,6 +2,7 @@ using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using ZapJobs.Core;
+using ZapJobs.Core.Events;
 
 namespace ZapJobs.Scheduling;
 
@@ -14,18 +15,21 @@ public class JobSchedulerService : IJobScheduler
     private readonly ICronScheduler _cronScheduler;
     private readonly ZapJobsOptions _options;
     private readonly ILogger<JobSchedulerService> _logger;
+    private readonly IJobEventDispatcher? _eventDispatcher;
     private readonly Dictionary<string, Type> _jobTypes = new();
 
     public JobSchedulerService(
         IJobStorage storage,
         ICronScheduler cronScheduler,
         IOptions<ZapJobsOptions> options,
-        ILogger<JobSchedulerService> logger)
+        ILogger<JobSchedulerService> logger,
+        IJobEventDispatcher? eventDispatcher = null)
     {
         _storage = storage;
         _cronScheduler = cronScheduler;
         _options = options.Value;
         _logger = logger;
+        _eventDispatcher = eventDispatcher;
     }
 
     /// <summary>
@@ -39,18 +43,36 @@ public class JobSchedulerService : IJobScheduler
 
     public async Task<Guid> EnqueueAsync(string jobTypeId, object? input = null, string? queue = null, CancellationToken ct = default)
     {
+        var actualQueue = queue ?? _options.DefaultQueue;
+        var inputJson = input != null ? JsonSerializer.Serialize(input) : null;
+
         var run = new JobRun
         {
             JobTypeId = jobTypeId,
             Status = JobRunStatus.Pending,
             TriggerType = JobTriggerType.Api,
-            Queue = queue ?? _options.DefaultQueue,
-            InputJson = input != null ? JsonSerializer.Serialize(input) : null,
+            Queue = actualQueue,
+            InputJson = inputJson,
             CreatedAt = DateTime.UtcNow
         };
 
         var runId = await _storage.EnqueueAsync(run, ct);
         _logger.LogInformation("Enqueued job {JobTypeId} with run ID {RunId}", jobTypeId, runId);
+
+        // Dispatch JobEnqueued event
+        if (_eventDispatcher != null)
+        {
+            await _eventDispatcher.DispatchAsync(new JobEnqueuedEvent
+            {
+                RunId = runId,
+                JobTypeId = jobTypeId,
+                Timestamp = DateTimeOffset.UtcNow,
+                Queue = actualQueue,
+                InputJson = inputJson,
+                TriggerType = JobTriggerType.Api
+            });
+        }
+
         return runId;
     }
 
@@ -67,19 +89,38 @@ public class JobSchedulerService : IJobScheduler
 
     public async Task<Guid> ScheduleAsync(string jobTypeId, DateTimeOffset runAt, object? input = null, string? queue = null, CancellationToken ct = default)
     {
+        var actualQueue = queue ?? _options.DefaultQueue;
+        var inputJson = input != null ? JsonSerializer.Serialize(input) : null;
+
         var run = new JobRun
         {
             JobTypeId = jobTypeId,
             Status = JobRunStatus.Scheduled,
             TriggerType = JobTriggerType.Scheduled,
-            Queue = queue ?? _options.DefaultQueue,
+            Queue = actualQueue,
             ScheduledAt = runAt.UtcDateTime,
-            InputJson = input != null ? JsonSerializer.Serialize(input) : null,
+            InputJson = inputJson,
             CreatedAt = DateTime.UtcNow
         };
 
         var runId = await _storage.EnqueueAsync(run, ct);
         _logger.LogInformation("Scheduled job {JobTypeId} with run ID {RunId} for {ScheduledAt}", jobTypeId, runId, runAt);
+
+        // Dispatch JobEnqueued event
+        if (_eventDispatcher != null)
+        {
+            await _eventDispatcher.DispatchAsync(new JobEnqueuedEvent
+            {
+                RunId = runId,
+                JobTypeId = jobTypeId,
+                Timestamp = DateTimeOffset.UtcNow,
+                Queue = actualQueue,
+                InputJson = inputJson,
+                TriggerType = JobTriggerType.Scheduled,
+                ScheduledAt = runAt
+            });
+        }
+
         return runId;
     }
 
@@ -290,6 +331,22 @@ public class JobSchedulerService : IJobScheduler
 
         var runId = await _storage.EnqueueAsync(run, ct);
         _logger.LogInformation("Manually triggered job {JobTypeId} with run ID {RunId}", jobTypeId, runId);
+
+        // Dispatch JobEnqueued event
+        if (_eventDispatcher != null)
+        {
+            await _eventDispatcher.DispatchAsync(new JobEnqueuedEvent
+            {
+                RunId = runId,
+                JobTypeId = jobTypeId,
+                Timestamp = DateTimeOffset.UtcNow,
+                Queue = _options.DefaultQueue,
+                InputJson = inputJson,
+                TriggerType = JobTriggerType.Manual,
+                TriggeredBy = "manual"
+            });
+        }
+
         return runId;
     }
 

@@ -1,3 +1,6 @@
+using ZapJobs.Core.Checkpoints;
+using ZapJobs.Core.History;
+
 namespace ZapJobs.Core;
 
 /// <summary>
@@ -159,6 +162,82 @@ public interface IJobStorage
 
     /// <summary>Cleanup old rate limit execution records</summary>
     Task<int> CleanupRateLimitExecutionsAsync(DateTime olderThan, CancellationToken ct = default);
+
+    // Checkpoints
+
+    /// <summary>Save a checkpoint</summary>
+    Task SaveCheckpointAsync(Checkpoint checkpoint, CancellationToken ct = default);
+
+    /// <summary>Get the latest checkpoint for a run and key</summary>
+    Task<Checkpoint?> GetLatestCheckpointAsync(Guid runId, string key, CancellationToken ct = default);
+
+    /// <summary>Get all checkpoints for a run, ordered by sequence number descending</summary>
+    Task<IReadOnlyList<Checkpoint>> GetCheckpointsAsync(Guid runId, CancellationToken ct = default);
+
+    /// <summary>Get checkpoint history for a specific key, ordered by sequence number descending</summary>
+    Task<IReadOnlyList<Checkpoint>> GetCheckpointHistoryAsync(Guid runId, string key, int limit = 10, CancellationToken ct = default);
+
+    /// <summary>Get the next sequence number for checkpoints in a run</summary>
+    Task<int> GetNextCheckpointSequenceAsync(Guid runId, CancellationToken ct = default);
+
+    /// <summary>Delete a specific checkpoint by ID</summary>
+    Task<bool> DeleteCheckpointAsync(Guid checkpointId, CancellationToken ct = default);
+
+    /// <summary>Delete all checkpoints for a run</summary>
+    Task<int> DeleteCheckpointsForRunAsync(Guid runId, CancellationToken ct = default);
+
+    /// <summary>Delete checkpoints by key for a run</summary>
+    Task<int> DeleteCheckpointsByKeyAsync(Guid runId, string key, CancellationToken ct = default);
+
+    /// <summary>Delete expired checkpoints</summary>
+    Task<int> DeleteExpiredCheckpointsAsync(CancellationToken ct = default);
+
+    /// <summary>Delete checkpoints for completed jobs older than the specified age</summary>
+    Task<int> DeleteCheckpointsForCompletedJobsAsync(TimeSpan completedJobAge, CancellationToken ct = default);
+
+    // Events (Event History/Audit Trail)
+
+    /// <summary>Append a single event to the store</summary>
+    Task AppendEventAsync(JobEvent @event, CancellationToken ct = default);
+
+    /// <summary>Append multiple events atomically</summary>
+    Task AppendEventsAsync(IEnumerable<JobEvent> events, CancellationToken ct = default);
+
+    /// <summary>Get all events for a job run</summary>
+    Task<IReadOnlyList<JobEvent>> GetEventsAsync(Guid runId, CancellationToken ct = default);
+
+    /// <summary>Get events for a run with filtering options</summary>
+    Task<IReadOnlyList<JobEvent>> GetEventsAsync(Guid runId, string? eventType, string? category, int limit = 1000, int offset = 0, CancellationToken ct = default);
+
+    /// <summary>Get events after a specific sequence number (for streaming/pagination)</summary>
+    Task<IReadOnlyList<JobEvent>> GetEventsAfterSequenceAsync(Guid runId, long afterSequence, int limit = 100, CancellationToken ct = default);
+
+    /// <summary>Get a single event by ID</summary>
+    Task<JobEvent?> GetEventAsync(Guid eventId, CancellationToken ct = default);
+
+    /// <summary>Get the latest event of a specific type for a run</summary>
+    Task<JobEvent?> GetLatestEventAsync(Guid runId, string eventType, CancellationToken ct = default);
+
+    /// <summary>Get event count for a run</summary>
+    Task<int> GetEventCountAsync(Guid runId, CancellationToken ct = default);
+
+    /// <summary>Get the next global sequence number for events</summary>
+    Task<long> GetNextEventSequenceAsync(CancellationToken ct = default);
+
+    /// <summary>Get events by correlation ID (for distributed tracing)</summary>
+    Task<IReadOnlyList<JobEvent>> GetEventsByCorrelationIdAsync(string correlationId, CancellationToken ct = default);
+
+    /// <summary>Get events for a workflow/batch</summary>
+    Task<IReadOnlyList<JobEvent>> GetEventsByWorkflowIdAsync(Guid workflowId, CancellationToken ct = default);
+
+    /// <summary>Search events by text (in payload, tags, actor)</summary>
+    Task<IReadOnlyList<JobEvent>> SearchEventsAsync(string query, Guid? runId = null, Guid? workflowId = null, string[]? eventTypes = null, DateTimeOffset? from = null, DateTimeOffset? to = null, int limit = 100, CancellationToken ct = default);
+
+    /// <summary>Delete all events for a run</summary>
+    Task<int> DeleteEventsForRunAsync(Guid runId, CancellationToken ct = default);
+
+    /// <summary>Delete events older than a specified age</summary>
+    Task<int> DeleteOldEventsAsync(TimeSpan maxAge, CancellationToken ct = default);
 
     // Maintenance
 

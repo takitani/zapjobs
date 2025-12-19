@@ -1,6 +1,8 @@
 using System.Text.Json;
 using Npgsql;
 using ZapJobs.Core;
+using ZapJobs.Core.Checkpoints;
+using ZapJobs.Core.History;
 
 namespace ZapJobs.Storage.PostgreSQL;
 
@@ -25,6 +27,8 @@ public class PostgreSqlJobStorage : IJobStorage
     private readonly string _batchJobs;
     private readonly string _batchContinuations;
     private readonly string _rateLimitExecutions;
+    private readonly string _checkpoints;
+    private readonly string _events;
 
     public PostgreSqlJobStorage(string connectionString) : this(new PostgreSqlStorageOptions { ConnectionString = connectionString })
     {
@@ -46,6 +50,8 @@ public class PostgreSqlJobStorage : IJobStorage
         _batchJobs = $"{_schema}.batch_jobs";
         _batchContinuations = $"{_schema}.batch_continuations";
         _rateLimitExecutions = $"{_schema}.rate_limit_executions";
+        _checkpoints = $"{_schema}.checkpoints";
+        _events = $"{_schema}.events";
 
         _jsonOptions = new JsonSerializerOptions
         {
@@ -1142,6 +1148,683 @@ public class PostgreSqlJobStorage : IJobStorage
 
         var result = await cmd.ExecuteScalarAsync(ct);
         return Convert.ToInt32(result);
+    }
+
+    // Checkpoints
+
+    public async Task SaveCheckpointAsync(Checkpoint checkpoint, CancellationToken ct = default)
+    {
+        await using var conn = CreateConnection();
+        await conn.OpenAsync(ct);
+
+        await using var cmd = new NpgsqlCommand($"""
+            INSERT INTO {_checkpoints} (
+                id, run_id, key, data_json, version, sequence_number,
+                data_size_bytes, is_compressed, created_at, expires_at, metadata_json
+            ) VALUES (
+                @id, @runId, @key, @dataJson, @version, @sequenceNumber,
+                @dataSizeBytes, @isCompressed, @createdAt, @expiresAt, @metadataJson
+            )
+            """, conn);
+
+        cmd.Parameters.AddWithValue("id", checkpoint.Id);
+        cmd.Parameters.AddWithValue("runId", checkpoint.RunId);
+        cmd.Parameters.AddWithValue("key", checkpoint.Key);
+        cmd.Parameters.AddWithValue("dataJson", checkpoint.DataJson);
+        cmd.Parameters.AddWithValue("version", checkpoint.Version);
+        cmd.Parameters.AddWithValue("sequenceNumber", checkpoint.SequenceNumber);
+        cmd.Parameters.AddWithValue("dataSizeBytes", checkpoint.DataSizeBytes);
+        cmd.Parameters.AddWithValue("isCompressed", checkpoint.IsCompressed);
+        cmd.Parameters.AddWithValue("createdAt", checkpoint.CreatedAt);
+        cmd.Parameters.AddWithValue("expiresAt", (object?)checkpoint.ExpiresAt ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("metadataJson", (object?)checkpoint.MetadataJson ?? DBNull.Value);
+
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    public async Task<Checkpoint?> GetLatestCheckpointAsync(Guid runId, string key, CancellationToken ct = default)
+    {
+        await using var conn = CreateConnection();
+        await conn.OpenAsync(ct);
+
+        await using var cmd = new NpgsqlCommand($"""
+            SELECT id, run_id, key, data_json, version, sequence_number,
+                   data_size_bytes, is_compressed, created_at, expires_at, metadata_json
+            FROM {_checkpoints}
+            WHERE run_id = @runId AND key = @key
+            ORDER BY sequence_number DESC
+            LIMIT 1
+            """, conn);
+
+        cmd.Parameters.AddWithValue("runId", runId);
+        cmd.Parameters.AddWithValue("key", key);
+
+        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        if (await reader.ReadAsync(ct))
+        {
+            return MapCheckpoint(reader);
+        }
+        return null;
+    }
+
+    public async Task<IReadOnlyList<Checkpoint>> GetCheckpointsAsync(Guid runId, CancellationToken ct = default)
+    {
+        await using var conn = CreateConnection();
+        await conn.OpenAsync(ct);
+
+        await using var cmd = new NpgsqlCommand($"""
+            SELECT id, run_id, key, data_json, version, sequence_number,
+                   data_size_bytes, is_compressed, created_at, expires_at, metadata_json
+            FROM {_checkpoints}
+            WHERE run_id = @runId
+            ORDER BY sequence_number DESC
+            """, conn);
+
+        cmd.Parameters.AddWithValue("runId", runId);
+
+        var checkpoints = new List<Checkpoint>();
+        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+        {
+            checkpoints.Add(MapCheckpoint(reader));
+        }
+        return checkpoints;
+    }
+
+    public async Task<IReadOnlyList<Checkpoint>> GetCheckpointHistoryAsync(Guid runId, string key, int limit = 10, CancellationToken ct = default)
+    {
+        await using var conn = CreateConnection();
+        await conn.OpenAsync(ct);
+
+        await using var cmd = new NpgsqlCommand($"""
+            SELECT id, run_id, key, data_json, version, sequence_number,
+                   data_size_bytes, is_compressed, created_at, expires_at, metadata_json
+            FROM {_checkpoints}
+            WHERE run_id = @runId AND key = @key
+            ORDER BY sequence_number DESC
+            LIMIT @limit
+            """, conn);
+
+        cmd.Parameters.AddWithValue("runId", runId);
+        cmd.Parameters.AddWithValue("key", key);
+        cmd.Parameters.AddWithValue("limit", limit);
+
+        var checkpoints = new List<Checkpoint>();
+        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+        {
+            checkpoints.Add(MapCheckpoint(reader));
+        }
+        return checkpoints;
+    }
+
+    public async Task<int> GetNextCheckpointSequenceAsync(Guid runId, CancellationToken ct = default)
+    {
+        await using var conn = CreateConnection();
+        await conn.OpenAsync(ct);
+
+        await using var cmd = new NpgsqlCommand($"""
+            SELECT COALESCE(MAX(sequence_number), 0) + 1
+            FROM {_checkpoints}
+            WHERE run_id = @runId
+            """, conn);
+
+        cmd.Parameters.AddWithValue("runId", runId);
+
+        var result = await cmd.ExecuteScalarAsync(ct);
+        return Convert.ToInt32(result);
+    }
+
+    public async Task<bool> DeleteCheckpointAsync(Guid checkpointId, CancellationToken ct = default)
+    {
+        await using var conn = CreateConnection();
+        await conn.OpenAsync(ct);
+
+        await using var cmd = new NpgsqlCommand($"""
+            DELETE FROM {_checkpoints} WHERE id = @id
+            """, conn);
+
+        cmd.Parameters.AddWithValue("id", checkpointId);
+
+        var affected = await cmd.ExecuteNonQueryAsync(ct);
+        return affected > 0;
+    }
+
+    public async Task<int> DeleteCheckpointsForRunAsync(Guid runId, CancellationToken ct = default)
+    {
+        await using var conn = CreateConnection();
+        await conn.OpenAsync(ct);
+
+        await using var cmd = new NpgsqlCommand($"""
+            WITH deleted AS (
+                DELETE FROM {_checkpoints}
+                WHERE run_id = @runId
+                RETURNING id
+            )
+            SELECT COUNT(*) FROM deleted
+            """, conn);
+
+        cmd.Parameters.AddWithValue("runId", runId);
+
+        var result = await cmd.ExecuteScalarAsync(ct);
+        return Convert.ToInt32(result);
+    }
+
+    public async Task<int> DeleteCheckpointsByKeyAsync(Guid runId, string key, CancellationToken ct = default)
+    {
+        await using var conn = CreateConnection();
+        await conn.OpenAsync(ct);
+
+        await using var cmd = new NpgsqlCommand($"""
+            WITH deleted AS (
+                DELETE FROM {_checkpoints}
+                WHERE run_id = @runId AND key = @key
+                RETURNING id
+            )
+            SELECT COUNT(*) FROM deleted
+            """, conn);
+
+        cmd.Parameters.AddWithValue("runId", runId);
+        cmd.Parameters.AddWithValue("key", key);
+
+        var result = await cmd.ExecuteScalarAsync(ct);
+        return Convert.ToInt32(result);
+    }
+
+    public async Task<int> DeleteExpiredCheckpointsAsync(CancellationToken ct = default)
+    {
+        await using var conn = CreateConnection();
+        await conn.OpenAsync(ct);
+
+        await using var cmd = new NpgsqlCommand($"""
+            WITH deleted AS (
+                DELETE FROM {_checkpoints}
+                WHERE expires_at IS NOT NULL AND expires_at <= NOW()
+                RETURNING id
+            )
+            SELECT COUNT(*) FROM deleted
+            """, conn);
+
+        var result = await cmd.ExecuteScalarAsync(ct);
+        return Convert.ToInt32(result);
+    }
+
+    public async Task<int> DeleteCheckpointsForCompletedJobsAsync(TimeSpan completedJobAge, CancellationToken ct = default)
+    {
+        await using var conn = CreateConnection();
+        await conn.OpenAsync(ct);
+
+        await using var cmd = new NpgsqlCommand($"""
+            WITH deleted AS (
+                DELETE FROM {_checkpoints} c
+                USING {_runs} r
+                WHERE c.run_id = r.id
+                AND r.status IN (@completed, @failed)
+                AND r.completed_at < @cutoff
+                RETURNING c.id
+            )
+            SELECT COUNT(*) FROM deleted
+            """, conn);
+
+        cmd.Parameters.AddWithValue("completed", (int)JobRunStatus.Completed);
+        cmd.Parameters.AddWithValue("failed", (int)JobRunStatus.Failed);
+        cmd.Parameters.AddWithValue("cutoff", DateTime.UtcNow - completedJobAge);
+
+        var result = await cmd.ExecuteScalarAsync(ct);
+        return Convert.ToInt32(result);
+    }
+
+    private static Checkpoint MapCheckpoint(NpgsqlDataReader reader)
+    {
+        return new Checkpoint
+        {
+            Id = reader.GetGuid(0),
+            RunId = reader.GetGuid(1),
+            Key = reader.GetString(2),
+            DataJson = reader.GetString(3),
+            Version = reader.GetInt32(4),
+            SequenceNumber = reader.GetInt32(5),
+            DataSizeBytes = reader.GetInt32(6),
+            IsCompressed = reader.GetBoolean(7),
+            CreatedAt = reader.GetFieldValue<DateTimeOffset>(8),
+            ExpiresAt = reader.IsDBNull(9) ? null : reader.GetFieldValue<DateTimeOffset>(9),
+            MetadataJson = reader.IsDBNull(10) ? null : reader.GetString(10)
+        };
+    }
+
+    // Events (Event History/Audit Trail)
+
+    public async Task AppendEventAsync(JobEvent @event, CancellationToken ct = default)
+    {
+        await using var conn = CreateConnection();
+        await conn.OpenAsync(ct);
+
+        // Auto-assign sequence number if not set
+        if (@event.SequenceNumber == 0)
+        {
+            @event.SequenceNumber = await GetNextEventSequenceInternalAsync(conn, ct);
+        }
+
+        await using var cmd = new NpgsqlCommand($"""
+            INSERT INTO {_events} (
+                id, run_id, workflow_id, event_type, category, sequence_number, run_sequence,
+                timestamp, payload_json, correlation_id, causation_id, actor, source,
+                tags, version, duration_ms, is_success, metadata_json
+            ) VALUES (
+                @id, @runId, @workflowId, @eventType, @category, @sequenceNumber, @runSequence,
+                @timestamp, @payloadJson, @correlationId, @causationId, @actor, @source,
+                @tags, @version, @durationMs, @isSuccess, @metadataJson
+            )
+            """, conn);
+
+        AddEventParameters(cmd, @event);
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    public async Task AppendEventsAsync(IEnumerable<JobEvent> events, CancellationToken ct = default)
+    {
+        var eventList = events.ToList();
+        if (eventList.Count == 0) return;
+
+        await using var conn = CreateConnection();
+        await conn.OpenAsync(ct);
+
+        // Get starting sequence number for batch
+        var nextSeq = await GetNextEventSequenceInternalAsync(conn, ct);
+
+        await using var batch = new NpgsqlBatch(conn);
+
+        foreach (var @event in eventList)
+        {
+            if (@event.SequenceNumber == 0)
+            {
+                @event.SequenceNumber = nextSeq++;
+            }
+
+            var cmd = new NpgsqlBatchCommand($"""
+                INSERT INTO {_events} (
+                    id, run_id, workflow_id, event_type, category, sequence_number, run_sequence,
+                    timestamp, payload_json, correlation_id, causation_id, actor, source,
+                    tags, version, duration_ms, is_success, metadata_json
+                ) VALUES (
+                    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18
+                )
+                """);
+
+            cmd.Parameters.AddWithValue(@event.Id);
+            cmd.Parameters.AddWithValue(@event.RunId);
+            cmd.Parameters.AddWithValue((object?)@event.WorkflowId ?? DBNull.Value);
+            cmd.Parameters.AddWithValue(@event.EventType);
+            cmd.Parameters.AddWithValue(@event.Category);
+            cmd.Parameters.AddWithValue(@event.SequenceNumber);
+            cmd.Parameters.AddWithValue(@event.RunSequence);
+            cmd.Parameters.AddWithValue(@event.Timestamp);
+            cmd.Parameters.AddWithValue(@event.PayloadJson);
+            cmd.Parameters.AddWithValue((object?)@event.CorrelationId ?? DBNull.Value);
+            cmd.Parameters.AddWithValue((object?)@event.CausationId ?? DBNull.Value);
+            cmd.Parameters.AddWithValue((object?)@event.Actor ?? DBNull.Value);
+            cmd.Parameters.AddWithValue((object?)@event.Source ?? DBNull.Value);
+            cmd.Parameters.AddWithValue((object?)@event.Tags ?? DBNull.Value);
+            cmd.Parameters.AddWithValue(@event.Version);
+            cmd.Parameters.AddWithValue((object?)@event.DurationMs ?? DBNull.Value);
+            cmd.Parameters.AddWithValue((object?)@event.IsSuccess ?? DBNull.Value);
+            cmd.Parameters.AddWithValue((object?)@event.MetadataJson ?? DBNull.Value);
+
+            batch.BatchCommands.Add(cmd);
+        }
+
+        await batch.ExecuteNonQueryAsync(ct);
+    }
+
+    public async Task<IReadOnlyList<JobEvent>> GetEventsAsync(Guid runId, CancellationToken ct = default)
+    {
+        return await GetEventsAsync(runId, null, null, 1000, 0, ct);
+    }
+
+    public async Task<IReadOnlyList<JobEvent>> GetEventsAsync(
+        Guid runId,
+        string? eventType,
+        string? category,
+        int limit = 1000,
+        int offset = 0,
+        CancellationToken ct = default)
+    {
+        await using var conn = CreateConnection();
+        await conn.OpenAsync(ct);
+
+        var whereClause = "WHERE run_id = @runId";
+        if (!string.IsNullOrEmpty(eventType))
+            whereClause += " AND event_type = @eventType";
+        if (!string.IsNullOrEmpty(category))
+            whereClause += " AND category = @category";
+
+        await using var cmd = new NpgsqlCommand($"""
+            SELECT id, run_id, workflow_id, event_type, category, sequence_number, run_sequence,
+                   timestamp, payload_json, correlation_id, causation_id, actor, source,
+                   tags, version, duration_ms, is_success, metadata_json
+            FROM {_events}
+            {whereClause}
+            ORDER BY sequence_number ASC
+            OFFSET @offset LIMIT @limit
+            """, conn);
+
+        cmd.Parameters.AddWithValue("runId", runId);
+        if (!string.IsNullOrEmpty(eventType))
+            cmd.Parameters.AddWithValue("eventType", eventType);
+        if (!string.IsNullOrEmpty(category))
+            cmd.Parameters.AddWithValue("category", category);
+        cmd.Parameters.AddWithValue("offset", offset);
+        cmd.Parameters.AddWithValue("limit", limit);
+
+        return await ReadEventsAsync(cmd, ct);
+    }
+
+    public async Task<IReadOnlyList<JobEvent>> GetEventsAfterSequenceAsync(
+        Guid runId,
+        long afterSequence,
+        int limit = 100,
+        CancellationToken ct = default)
+    {
+        await using var conn = CreateConnection();
+        await conn.OpenAsync(ct);
+
+        await using var cmd = new NpgsqlCommand($"""
+            SELECT id, run_id, workflow_id, event_type, category, sequence_number, run_sequence,
+                   timestamp, payload_json, correlation_id, causation_id, actor, source,
+                   tags, version, duration_ms, is_success, metadata_json
+            FROM {_events}
+            WHERE run_id = @runId AND sequence_number > @afterSequence
+            ORDER BY sequence_number ASC
+            LIMIT @limit
+            """, conn);
+
+        cmd.Parameters.AddWithValue("runId", runId);
+        cmd.Parameters.AddWithValue("afterSequence", afterSequence);
+        cmd.Parameters.AddWithValue("limit", limit);
+
+        return await ReadEventsAsync(cmd, ct);
+    }
+
+    public async Task<JobEvent?> GetEventAsync(Guid eventId, CancellationToken ct = default)
+    {
+        await using var conn = CreateConnection();
+        await conn.OpenAsync(ct);
+
+        await using var cmd = new NpgsqlCommand($"""
+            SELECT id, run_id, workflow_id, event_type, category, sequence_number, run_sequence,
+                   timestamp, payload_json, correlation_id, causation_id, actor, source,
+                   tags, version, duration_ms, is_success, metadata_json
+            FROM {_events}
+            WHERE id = @id
+            """, conn);
+
+        cmd.Parameters.AddWithValue("id", eventId);
+
+        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        if (await reader.ReadAsync(ct))
+        {
+            return MapEvent(reader);
+        }
+        return null;
+    }
+
+    public async Task<JobEvent?> GetLatestEventAsync(Guid runId, string eventType, CancellationToken ct = default)
+    {
+        await using var conn = CreateConnection();
+        await conn.OpenAsync(ct);
+
+        await using var cmd = new NpgsqlCommand($"""
+            SELECT id, run_id, workflow_id, event_type, category, sequence_number, run_sequence,
+                   timestamp, payload_json, correlation_id, causation_id, actor, source,
+                   tags, version, duration_ms, is_success, metadata_json
+            FROM {_events}
+            WHERE run_id = @runId AND event_type = @eventType
+            ORDER BY sequence_number DESC
+            LIMIT 1
+            """, conn);
+
+        cmd.Parameters.AddWithValue("runId", runId);
+        cmd.Parameters.AddWithValue("eventType", eventType);
+
+        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        if (await reader.ReadAsync(ct))
+        {
+            return MapEvent(reader);
+        }
+        return null;
+    }
+
+    public async Task<int> GetEventCountAsync(Guid runId, CancellationToken ct = default)
+    {
+        await using var conn = CreateConnection();
+        await conn.OpenAsync(ct);
+
+        await using var cmd = new NpgsqlCommand($"""
+            SELECT COUNT(*) FROM {_events} WHERE run_id = @runId
+            """, conn);
+
+        cmd.Parameters.AddWithValue("runId", runId);
+
+        var result = await cmd.ExecuteScalarAsync(ct);
+        return Convert.ToInt32(result);
+    }
+
+    public async Task<long> GetNextEventSequenceAsync(CancellationToken ct = default)
+    {
+        await using var conn = CreateConnection();
+        await conn.OpenAsync(ct);
+
+        return await GetNextEventSequenceInternalAsync(conn, ct);
+    }
+
+    private async Task<long> GetNextEventSequenceInternalAsync(NpgsqlConnection conn, CancellationToken ct)
+    {
+        await using var cmd = new NpgsqlCommand($"""
+            SELECT COALESCE(MAX(sequence_number), 0) + 1 FROM {_events}
+            """, conn);
+
+        var result = await cmd.ExecuteScalarAsync(ct);
+        return Convert.ToInt64(result);
+    }
+
+    public async Task<IReadOnlyList<JobEvent>> GetEventsByCorrelationIdAsync(
+        string correlationId,
+        CancellationToken ct = default)
+    {
+        await using var conn = CreateConnection();
+        await conn.OpenAsync(ct);
+
+        await using var cmd = new NpgsqlCommand($"""
+            SELECT id, run_id, workflow_id, event_type, category, sequence_number, run_sequence,
+                   timestamp, payload_json, correlation_id, causation_id, actor, source,
+                   tags, version, duration_ms, is_success, metadata_json
+            FROM {_events}
+            WHERE correlation_id = @correlationId
+            ORDER BY sequence_number ASC
+            """, conn);
+
+        cmd.Parameters.AddWithValue("correlationId", correlationId);
+
+        return await ReadEventsAsync(cmd, ct);
+    }
+
+    public async Task<IReadOnlyList<JobEvent>> GetEventsByWorkflowIdAsync(
+        Guid workflowId,
+        CancellationToken ct = default)
+    {
+        await using var conn = CreateConnection();
+        await conn.OpenAsync(ct);
+
+        await using var cmd = new NpgsqlCommand($"""
+            SELECT id, run_id, workflow_id, event_type, category, sequence_number, run_sequence,
+                   timestamp, payload_json, correlation_id, causation_id, actor, source,
+                   tags, version, duration_ms, is_success, metadata_json
+            FROM {_events}
+            WHERE workflow_id = @workflowId
+            ORDER BY sequence_number ASC
+            """, conn);
+
+        cmd.Parameters.AddWithValue("workflowId", workflowId);
+
+        return await ReadEventsAsync(cmd, ct);
+    }
+
+    public async Task<IReadOnlyList<JobEvent>> SearchEventsAsync(
+        string query,
+        Guid? runId = null,
+        Guid? workflowId = null,
+        string[]? eventTypes = null,
+        DateTimeOffset? from = null,
+        DateTimeOffset? to = null,
+        int limit = 100,
+        CancellationToken ct = default)
+    {
+        await using var conn = CreateConnection();
+        await conn.OpenAsync(ct);
+
+        var conditions = new List<string>();
+
+        // Full-text search on payload_json using PostgreSQL's ILIKE or full-text search
+        if (!string.IsNullOrEmpty(query))
+            conditions.Add("(payload_json ILIKE @query OR metadata_json ILIKE @query)");
+        if (runId.HasValue)
+            conditions.Add("run_id = @runId");
+        if (workflowId.HasValue)
+            conditions.Add("workflow_id = @workflowId");
+        if (eventTypes?.Length > 0)
+            conditions.Add("event_type = ANY(@eventTypes)");
+        if (from.HasValue)
+            conditions.Add("timestamp >= @from");
+        if (to.HasValue)
+            conditions.Add("timestamp <= @to");
+
+        var whereClause = conditions.Count > 0
+            ? "WHERE " + string.Join(" AND ", conditions)
+            : "";
+
+        await using var cmd = new NpgsqlCommand($"""
+            SELECT id, run_id, workflow_id, event_type, category, sequence_number, run_sequence,
+                   timestamp, payload_json, correlation_id, causation_id, actor, source,
+                   tags, version, duration_ms, is_success, metadata_json
+            FROM {_events}
+            {whereClause}
+            ORDER BY timestamp DESC
+            LIMIT @limit
+            """, conn);
+
+        if (!string.IsNullOrEmpty(query))
+            cmd.Parameters.AddWithValue("query", $"%{query}%");
+        if (runId.HasValue)
+            cmd.Parameters.AddWithValue("runId", runId.Value);
+        if (workflowId.HasValue)
+            cmd.Parameters.AddWithValue("workflowId", workflowId.Value);
+        if (eventTypes?.Length > 0)
+            cmd.Parameters.AddWithValue("eventTypes", eventTypes);
+        if (from.HasValue)
+            cmd.Parameters.AddWithValue("from", from.Value);
+        if (to.HasValue)
+            cmd.Parameters.AddWithValue("to", to.Value);
+        cmd.Parameters.AddWithValue("limit", limit);
+
+        return await ReadEventsAsync(cmd, ct);
+    }
+
+    public async Task<int> DeleteEventsForRunAsync(Guid runId, CancellationToken ct = default)
+    {
+        await using var conn = CreateConnection();
+        await conn.OpenAsync(ct);
+
+        await using var cmd = new NpgsqlCommand($"""
+            WITH deleted AS (
+                DELETE FROM {_events}
+                WHERE run_id = @runId
+                RETURNING id
+            )
+            SELECT COUNT(*) FROM deleted
+            """, conn);
+
+        cmd.Parameters.AddWithValue("runId", runId);
+
+        var result = await cmd.ExecuteScalarAsync(ct);
+        return Convert.ToInt32(result);
+    }
+
+    public async Task<int> DeleteOldEventsAsync(TimeSpan maxAge, CancellationToken ct = default)
+    {
+        await using var conn = CreateConnection();
+        await conn.OpenAsync(ct);
+
+        await using var cmd = new NpgsqlCommand($"""
+            WITH deleted AS (
+                DELETE FROM {_events}
+                WHERE timestamp < @cutoff
+                RETURNING id
+            )
+            SELECT COUNT(*) FROM deleted
+            """, conn);
+
+        cmd.Parameters.AddWithValue("cutoff", DateTimeOffset.UtcNow - maxAge);
+
+        var result = await cmd.ExecuteScalarAsync(ct);
+        return Convert.ToInt32(result);
+    }
+
+    private static void AddEventParameters(NpgsqlCommand cmd, JobEvent @event)
+    {
+        cmd.Parameters.AddWithValue("id", @event.Id);
+        cmd.Parameters.AddWithValue("runId", @event.RunId);
+        cmd.Parameters.AddWithValue("workflowId", (object?)@event.WorkflowId ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("eventType", @event.EventType);
+        cmd.Parameters.AddWithValue("category", @event.Category);
+        cmd.Parameters.AddWithValue("sequenceNumber", @event.SequenceNumber);
+        cmd.Parameters.AddWithValue("runSequence", @event.RunSequence);
+        cmd.Parameters.AddWithValue("timestamp", @event.Timestamp);
+        cmd.Parameters.AddWithValue("payloadJson", @event.PayloadJson);
+        cmd.Parameters.AddWithValue("correlationId", (object?)@event.CorrelationId ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("causationId", (object?)@event.CausationId ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("actor", (object?)@event.Actor ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("source", (object?)@event.Source ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("tags", (object?)@event.Tags ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("version", @event.Version);
+        cmd.Parameters.AddWithValue("durationMs", (object?)@event.DurationMs ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("isSuccess", (object?)@event.IsSuccess ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("metadataJson", (object?)@event.MetadataJson ?? DBNull.Value);
+    }
+
+    private static JobEvent MapEvent(NpgsqlDataReader reader)
+    {
+        return new JobEvent
+        {
+            Id = reader.GetGuid(0),
+            RunId = reader.GetGuid(1),
+            WorkflowId = reader.IsDBNull(2) ? null : reader.GetGuid(2),
+            EventType = reader.GetString(3),
+            Category = reader.GetString(4),
+            SequenceNumber = reader.GetInt64(5),
+            RunSequence = reader.GetInt32(6),
+            Timestamp = reader.GetFieldValue<DateTimeOffset>(7),
+            PayloadJson = reader.GetString(8),
+            CorrelationId = reader.IsDBNull(9) ? null : reader.GetString(9),
+            CausationId = reader.IsDBNull(10) ? null : reader.GetString(10),
+            Actor = reader.IsDBNull(11) ? null : reader.GetString(11),
+            Source = reader.IsDBNull(12) ? null : reader.GetString(12),
+            Tags = reader.IsDBNull(13) ? null : reader.GetFieldValue<string[]>(13),
+            Version = reader.GetInt32(14),
+            DurationMs = reader.IsDBNull(15) ? null : reader.GetInt64(15),
+            IsSuccess = reader.IsDBNull(16) ? null : reader.GetBoolean(16),
+            MetadataJson = reader.IsDBNull(17) ? null : reader.GetString(17)
+        };
+    }
+
+    private static async Task<IReadOnlyList<JobEvent>> ReadEventsAsync(NpgsqlCommand cmd, CancellationToken ct)
+    {
+        var events = new List<JobEvent>();
+        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+        {
+            events.Add(MapEvent(reader));
+        }
+        return events;
     }
 
     // Maintenance

@@ -1,6 +1,7 @@
 {
   "enabledPlugins": {
     "claude-mem@thedotmack": true,
-    "roadmap@exato-digital-marketplace": true
+    "roadmap@exato-digital-marketplace": true,
+    "dev-browser@dev-browser-marketplace": true
   }
 }
