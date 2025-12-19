@@ -12,6 +12,7 @@ using ZapJobs.HostedServices;
 using ZapJobs.RateLimiting;
 using ZapJobs.Scheduling;
 using ZapJobs.Tracking;
+using ZapJobs.Webhooks;
 
 namespace ZapJobs;
 
@@ -68,6 +69,12 @@ public static class ServiceCollectionExtensions
         services.TryAddSingleton<IJobEventDispatcher>(sp => sp.GetRequiredService<JobEventDispatcher>());
         services.AddHostedService<JobEventBackgroundService>();
 
+        // Register webhook services
+        services.AddHttpClient("ZapJobsWebhook");
+        services.TryAddSingleton<WebhookService>();
+        services.TryAddSingleton<IWebhookService>(sp => sp.GetRequiredService<WebhookService>());
+        services.AddHostedService<WebhookDeliveryService>();
+
         // Register heartbeat and processor
         services.TryAddSingleton<HeartbeatService>();
         services.AddHostedService(sp => sp.GetRequiredService<HeartbeatService>());
@@ -113,6 +120,12 @@ public static class ServiceCollectionExtensions
         services.TryAddSingleton<JobEventDispatcher>();
         services.TryAddSingleton<IJobEventDispatcher>(sp => sp.GetRequiredService<JobEventDispatcher>());
         services.AddHostedService<JobEventBackgroundService>();
+
+        // Register webhook services
+        services.AddHttpClient("ZapJobsWebhook");
+        services.TryAddSingleton<WebhookService>();
+        services.TryAddSingleton<IWebhookService>(sp => sp.GetRequiredService<WebhookService>());
+        services.AddHostedService<WebhookDeliveryService>();
 
         services.TryAddSingleton<HeartbeatService>();
         services.AddHostedService(sp => sp.GetRequiredService<HeartbeatService>());
@@ -246,6 +259,39 @@ public class ZapJobsBuilder
     public ZapJobsBuilder UseQueueRateLimit(string queue, int limit, TimeSpan window)
     {
         return UseQueueRateLimit(queue, RateLimitPolicy.Create(limit, window));
+    }
+
+    /// <summary>
+    /// Enable webhooks for job events. Requires IWebhookStorage to be registered.
+    /// This registers the WebhookEventHandler to publish job events to webhook subscribers.
+    /// </summary>
+    /// <param name="configure">Optional configuration for webhook options</param>
+    /// <example>
+    /// <code>
+    /// services.AddZapJobs()
+    ///     .UseWebhooks(options => {
+    ///         options.MaxRetryAttempts = 3;
+    ///         options.RequestTimeout = TimeSpan.FromSeconds(30);
+    ///     });
+    /// </code>
+    /// </example>
+    public ZapJobsBuilder UseWebhooks(Action<WebhookOptions>? configure = null)
+    {
+        if (configure != null)
+        {
+            var options = new WebhookOptions();
+            configure(options);
+            Services.TryAddSingleton(options);
+        }
+        else
+        {
+            Services.TryAddSingleton(new WebhookOptions());
+        }
+
+        // Register webhook event handler for all job events
+        AddEventHandler<WebhookEventHandler>();
+
+        return this;
     }
 
     /// <summary>

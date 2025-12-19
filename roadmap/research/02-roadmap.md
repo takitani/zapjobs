@@ -110,10 +110,10 @@ Roadmap priorizado baseado em análise de concorrentes e necessidades do projeto
 | Health Checks | IHealthCheck para ASP.NET Core | Baixo | Médio | ✅ Feito |
 
 #### 2.2 Webhooks e Notificações
-| Item | Descrição | Esforço | Impacto |
-|------|-----------|---------|---------|
-| Webhooks | Notificar URLs em eventos de jobs | Médio | Alto |
-| Event System | Eventos internos para extensibilidade | Médio | Médio |
+| Item | Descrição | Esforço | Impacto | Status |
+|------|-----------|---------|---------|--------|
+| Webhooks | Notificar URLs em eventos de jobs | Médio | Alto | ✅ Feito |
+| Event System | Eventos internos para extensibilidade | Médio | Médio | ✅ Feito |
 
 ### Fase 3: Dashboard Avançado (Média Prioridade)
 
@@ -235,14 +235,16 @@ O que já fazemos melhor:
 - ~~Checkpoints/Resume~~ ✅
 - ~~Event history/Replay~~ ✅
 
-### v1.4 - Observability
-- OpenTelemetry
-- Prometheus metrics
-- Webhooks
+### v1.4 - Observability ✅
+- ~~OpenTelemetry~~ ✅
+- ~~Prometheus metrics~~ ✅
+- ~~Health checks~~ ✅
+- ~~Webhooks~~ ✅
 
-### v2.0 - Real-time
+### v2.0 - Real-time (em progresso)
 - SignalR dashboard
-- REST API standalone
+- ~~REST API standalone~~ ✅
+- ~~OpenAPI/Swagger~~ ✅
 
 ### v2.1 - Advanced
 - Calendar exclusions

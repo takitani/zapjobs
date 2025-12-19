@@ -29,7 +29,7 @@ dotnet pack -c Release
 
 ```
 ZapJobs.Core (Abstractions + Entities)
-    ├── Abstractions/    → IJob, IJobStorage, IJobScheduler, IJobTracker, IJobLogger, IDeadLetterManager
+    ├── Abstractions/    → IJob, IJobStorage, IJobScheduler, IJobTracker, IJobLogger, IDeadLetterManager, IWebhookService, IWebhookStorage
     ├── Batches/         → IBatchBuilder, IBatchService
     ├── Checkpoints/     → ICheckpointStore, Checkpoint, CheckpointOptions, ResumeContext
     ├── Configuration/   → ZapJobsOptions, RetryPolicy
@@ -49,6 +49,7 @@ ZapJobs (Runtime)
     ├── RateLimiting/    → SlidingWindowRateLimiter, RateLimitCleanupService
     ├── Scheduling/      → JobSchedulerService, CronScheduler
     ├── Tracking/        → JobTrackerService, JobLoggerService, HeartbeatService
+    ├── Webhooks/        → WebhookService, WebhookDeliveryService, WebhookEventHandler
     └── HostedServices/  → JobProcessorHostedService, JobRegistrationHostedService
 
 ZapJobs.Storage.InMemory (Dev/Test)
@@ -906,6 +907,109 @@ public class ZapJobsInstrumentationOptions
 **Context Propagation:**
 Trace context automatically propagates through job continuations, so parent and child jobs appear in the same distributed trace.
 
+### Webhooks
+
+Send HTTP notifications to external systems when job events occur. Supports HMAC-SHA256 signing, custom headers, wildcard filters, and automatic retry with exponential backoff.
+
+**Setup:**
+```csharp
+var builder = WebApplication.CreateBuilder(args);
+
+builder.Services.AddZapJobs()
+    .UsePostgreSqlStorage(connectionString)
+    .UseWebhooks(options =>
+    {
+        options.RequestTimeout = TimeSpan.FromSeconds(30);
+        options.MaxRetryAttempts = 5;
+        options.MaxConsecutiveFailures = 10;  // Disable subscription after N failures
+        options.DeliveryRetention = TimeSpan.FromDays(7);
+    });
+
+var app = builder.Build();
+app.Run();
+```
+
+**Creating Webhooks via API:**
+```bash
+# Create a webhook subscription
+curl -X POST -H "X-Api-Key: my-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Slack Notifications",
+    "url": "https://hooks.slack.com/...",
+    "events": ["JobFailed", "JobCompleted"],
+    "jobTypeFilter": "critical-*",
+    "queueFilter": "production",
+    "secret": "my-webhook-secret",
+    "headers": {"Authorization": "Bearer token"}
+  }' \
+  http://localhost:5000/api/v1/webhooks
+
+# Test a webhook
+curl -X POST -H "X-Api-Key: my-key" \
+  http://localhost:5000/api/v1/webhooks/{id}/test
+
+# Get delivery history
+curl -H "X-Api-Key: my-key" \
+  http://localhost:5000/api/v1/webhooks/{id}/deliveries
+```
+
+**Webhook Payload:**
+```json
+{
+  "event": "JobCompleted",
+  "timestamp": "2025-01-15T10:30:00Z",
+  "jobTypeId": "process-order",
+  "runId": "123e4567-e89b-12d3-a456-426614174000",
+  "queue": "default",
+  "status": "Completed",
+  "durationMs": 1250,
+  "attemptNumber": 1,
+  "itemsProcessed": 100,
+  "itemsSucceeded": 98,
+  "itemsFailed": 2
+}
+```
+
+**HTTP Headers:**
+| Header | Description |
+|--------|-------------|
+| `X-ZapJobs-Event` | Event type (JobCompleted, JobFailed, etc.) |
+| `X-ZapJobs-Delivery` | Unique delivery ID |
+| `X-ZapJobs-Timestamp` | Unix timestamp of the event |
+| `X-ZapJobs-Signature` | HMAC-SHA256 signature (if secret configured) |
+
+**HMAC Signature Verification:**
+```csharp
+public bool VerifySignature(string payload, string signature, string secret)
+{
+    using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(secret));
+    var hash = hmac.ComputeHash(Encoding.UTF8.GetBytes(payload));
+    var expected = $"sha256={Convert.ToHexString(hash).ToLowerInvariant()}";
+    return signature == expected;
+}
+```
+
+**Available Events:**
+- `JobEnqueued` - Job added to queue
+- `JobStarted` - Job execution started
+- `JobCompleted` - Job completed successfully
+- `JobFailed` - Job failed (includes retry info)
+- `JobRetrying` - Job scheduled for retry
+- `JobCancelled` - Job was cancelled
+- `AllJobEvents` - Subscribe to all job events
+
+**Wildcard Filters:**
+```
+jobTypeFilter: "send-*"       # Matches send-email, send-sms
+queueFilter: "prod-*"         # Matches prod-critical, prod-default
+```
+
+**Retry Behavior:**
+- Failed deliveries are retried with exponential backoff: 10s, 30s, 1m, 5m, 15m
+- Subscriptions are auto-disabled after 10 consecutive failures
+- Old delivery records are cleaned up after 7 days
+
 ### REST API
 
 Complete REST API for managing jobs, runs, workers, dead letter queue, and statistics. Includes built-in Swagger/OpenAPI documentation.
@@ -991,7 +1095,7 @@ public class ZapJobsOptions
 
 ## Database Schema
 
-PostgreSQL tables (see `Migrations/InitialCreate.sql`, `Migrations/AddBatches.sql`, `Migrations/AddRateLimiting.sql`, `Migrations/AddCheckpoints.sql`, and `Migrations/AddEvents.sql`):
+PostgreSQL tables (see `Migrations/InitialCreate.sql`, `Migrations/AddBatches.sql`, `Migrations/AddRateLimiting.sql`, `Migrations/AddCheckpoints.sql`, `Migrations/AddEvents.sql`, and `Migrations/AddWebhooks.sql`):
 
 | Table | Purpose |
 |-------|---------|
@@ -1007,6 +1111,8 @@ PostgreSQL tables (see `Migrations/InitialCreate.sql`, `Migrations/AddBatches.sq
 | `zapjobs.rate_limit_executions` | Rate limit tracking for sliding window |
 | `zapjobs.checkpoints` | Checkpoint state for job resumption |
 | `zapjobs.events` | Immutable event log for audit trail and time-travel debugging |
+| `zapjobs.webhook_subscriptions` | Webhook subscription configurations |
+| `zapjobs.webhook_deliveries` | Webhook delivery attempts and retry tracking |
 
 ## Retry Policy
 
@@ -1108,3 +1214,4 @@ app.Run();
 - [x] OpenTelemetry (distributed tracing and metrics via OpenTelemetry)
 - [x] REST API (complete management API with 6 controllers)
 - [x] OpenAPI/Swagger (auto-generated API documentation)
+- [x] Webhooks (HTTP notifications for job events with HMAC signing)

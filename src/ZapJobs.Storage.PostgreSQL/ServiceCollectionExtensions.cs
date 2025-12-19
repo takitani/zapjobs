@@ -17,6 +17,11 @@ public static class ServiceCollectionExtensions
         var options = new PostgreSqlStorageOptions { ConnectionString = connectionString };
         services.TryAddSingleton(new PostgreSqlJobStorage(options));
         services.TryAddSingleton<IJobStorage>(sp => sp.GetRequiredService<PostgreSqlJobStorage>());
+
+        // Register webhook storage
+        services.TryAddSingleton(new PostgreSqlWebhookStorage(options));
+        services.TryAddSingleton<IWebhookStorage>(sp => sp.GetRequiredService<PostgreSqlWebhookStorage>());
+
         return services;
     }
 
@@ -32,6 +37,10 @@ public static class ServiceCollectionExtensions
 
         services.TryAddSingleton(new PostgreSqlJobStorage(options));
         services.TryAddSingleton<IJobStorage>(sp => sp.GetRequiredService<PostgreSqlJobStorage>());
+
+        // Register webhook storage
+        services.TryAddSingleton(new PostgreSqlWebhookStorage(options));
+        services.TryAddSingleton<IWebhookStorage>(sp => sp.GetRequiredService<PostgreSqlWebhookStorage>());
 
         return services;
     }

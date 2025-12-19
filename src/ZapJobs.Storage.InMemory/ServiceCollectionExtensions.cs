@@ -16,6 +16,11 @@ public static class ServiceCollectionExtensions
     {
         services.TryAddSingleton<InMemoryJobStorage>();
         services.TryAddSingleton<IJobStorage>(sp => sp.GetRequiredService<InMemoryJobStorage>());
+
+        // Register webhook storage
+        services.TryAddSingleton<InMemoryWebhookStorage>();
+        services.TryAddSingleton<IWebhookStorage>(sp => sp.GetRequiredService<InMemoryWebhookStorage>());
+
         return services;
     }
 }
