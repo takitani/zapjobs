@@ -33,7 +33,7 @@ jobs:
       run: dotnet test ZapJobs.slnx --no-build --configuration Release --verbosity normal --collect:"XPlat Code Coverage" --results-directory ./coverage
 
     - name: Upload coverage
-      uses: codecov/codecov-action@v4
+      uses: codecov/codecov-action@v5
       with:
         directory: ./coverage
         fail_ci_if_error: false
